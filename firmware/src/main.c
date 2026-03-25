@@ -58,7 +58,7 @@ static int REV_SPS  = 4000;
 static int AUTO_SPS = 6000;
 
 // Motion logic
-static bool MOTION_FAULT_ENABLED = false;
+static bool MOTION_FAULT_ENABLED = true;
 static int  MOTION_TIMEOUT_MS    = 800;
 static int  MOTION_STARTUP_MS    = 5000;   // grace timer / bowden delay
 
