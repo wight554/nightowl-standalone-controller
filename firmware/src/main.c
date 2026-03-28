@@ -382,8 +382,8 @@ static bool oled_init(void) {
 }
 
 // ===================== Encoder + buttons =====================
-#define ENC_STEP_MS   4
-#define ENC_DIR_HYST  1
+#define ENC_STEP_MS   8
+#define ENC_DIR_HYST  4
 #define CONFIRM_LONGPRESS_MS 450
 
 static uint8_t enc_prev_ab = 0;
@@ -436,12 +436,12 @@ static evt_t input_poll(uint32_t now_ms){
 
         if((now_ms - enc_last_emit_ms) >= ENC_STEP_MS){
             if(enc_accum >= ENC_DIR_HYST){
-                enc_accum = 0;
+                enc_accum -= ENC_DIR_HYST;
                 enc_last_emit_ms = now_ms;
                 return EVT_CW;
             }
             if(enc_accum <= -ENC_DIR_HYST){
-                enc_accum = 0;
+                enc_accum += ENC_DIR_HYST;
                 enc_last_emit_ms = now_ms;
                 return EVT_CCW;
             }
@@ -485,8 +485,8 @@ static evt_t input_poll(uint32_t now_ms){
 typedef enum {
     SCR_HOME=0,
     SCR_MENU=1,
-    SCR_SETTINGS=2,
-    SCR_SETTINGS_EDIT=3,
+    SCR_SETTINGS=2,      // categories
+    SCR_SETTINGS_EDIT=3, // items / edit mode
     SCR_MANUAL=4,
     SCR_ERROR=5
 } screen_t;
@@ -497,7 +497,6 @@ static bool error_active = false;
 static const char *error_msg = "";
 
 static int main_idx = 0;
-static int settings_idx = 0;
 static int manual_idx = 0;
 
 typedef enum { MAN_FEED=0, MAN_REV=1 } man_action_t;
@@ -505,6 +504,18 @@ static int manual_lane = 1;
 static man_action_t manual_action = MAN_FEED;
 static bool manual_running = false;
 static int manual_sps = 0;
+
+// settings hierarchy
+typedef enum {
+    SETCAT_SPEEDS = 0,
+    SETCAT_MOTION = 1,
+    SETCAT_SAFETY = 2,
+    SETCAT_COUNT
+} settings_cat_t;
+
+static int settings_cat_idx = 0;
+static int settings_item_idx = 0;
+static bool settings_value_edit = false;
 
 static const char* main_label(int i){
     switch(i){
@@ -515,16 +526,101 @@ static const char* main_label(int i){
     }
 }
 
-static const char* settings_label(int i){
+static const char* settings_cat_label(int i){
     switch(i){
-        case 0: return "Feed sps";
-        case 1: return "Rev  sps";
-        case 2: return "Auto sps";
-        case 3: return "Motion ms";
-        case 4: return "Cooldown ms";
-        case 5: return "Motion fault";
-        case 6: return "Runout cool";
+        case 0: return "Speeds";
+        case 1: return "Motion";
+        case 2: return "Safety";
         default: return "?";
+    }
+}
+
+static int settings_item_count(int cat){
+    switch(cat){
+        case SETCAT_SPEEDS: return 3;
+        case SETCAT_MOTION: return 3;
+        case SETCAT_SAFETY: return 1;
+        default: return 0;
+    }
+}
+
+static const char* settings_item_label(int cat, int i){
+    switch(cat){
+        case SETCAT_SPEEDS:
+            switch(i){
+                case 0: return "Feed sps";
+                case 1: return "Rev  sps";
+                case 2: return "Auto sps";
+            }
+            break;
+        case SETCAT_MOTION:
+            switch(i){
+                case 0: return "Motion ms";
+                case 1: return "Startup ms";
+                case 2: return "Motion fault";
+            }
+            break;
+        case SETCAT_SAFETY:
+            switch(i){
+                case 0: return "Runout cool";
+            }
+            break;
+    }
+    return "?";
+}
+
+static const char* current_settings_item_label(int i){
+    return settings_item_label(settings_cat_idx, i);
+}
+
+static void settings_item_value_str(int cat, int i, char *out, size_t out_sz){
+    switch(cat){
+        case SETCAT_SPEEDS:
+            if(i == 0) snprintf(out, out_sz, "%d", FEED_SPS);
+            else if(i == 1) snprintf(out, out_sz, "%d", REV_SPS);
+            else if(i == 2) snprintf(out, out_sz, "%d", AUTO_SPS);
+            else snprintf(out, out_sz, "");
+            break;
+
+        case SETCAT_MOTION:
+            if(i == 0) snprintf(out, out_sz, "%d", MOTION_TIMEOUT_MS);
+            else if(i == 1) snprintf(out, out_sz, "%d", MOTION_STARTUP_MS);
+            else if(i == 2) snprintf(out, out_sz, "%s", MOTION_FAULT_ENABLED ? "ON" : "OFF");
+            else snprintf(out, out_sz, "");
+            break;
+
+        case SETCAT_SAFETY:
+            if(i == 0) snprintf(out, out_sz, "%d", RUNOUT_COOLDOWN_MS);
+            else snprintf(out, out_sz, "");
+            break;
+
+        default:
+            snprintf(out, out_sz, "");
+            break;
+    }
+}
+
+static bool settings_item_is_bool(int cat, int i){
+    return (cat == SETCAT_MOTION && i == 2);
+}
+
+static void settings_adjust(int cat, int i, int dir){
+    switch(cat){
+        case SETCAT_SPEEDS:
+            if(i == 0) FEED_SPS = clamp_i(FEED_SPS + dir * 200, 200, 30000);
+            if(i == 1) REV_SPS  = clamp_i(REV_SPS  + dir * 200, 200, 30000);
+            if(i == 2) AUTO_SPS = clamp_i(AUTO_SPS + dir * 200, 200, 30000);
+            break;
+
+        case SETCAT_MOTION:
+            if(i == 0) MOTION_TIMEOUT_MS = clamp_i(MOTION_TIMEOUT_MS + dir * 100, 100, 5000);
+            if(i == 1) MOTION_STARTUP_MS = clamp_i(MOTION_STARTUP_MS + dir * 500, 0, 30000);
+            if(i == 2) MOTION_FAULT_ENABLED = !MOTION_FAULT_ENABLED;
+            break;
+
+        case SETCAT_SAFETY:
+            if(i == 0) RUNOUT_COOLDOWN_MS = clamp_i(RUNOUT_COOLDOWN_MS + dir * 1000, 1000, 60000);
+            break;
     }
 }
 
@@ -557,7 +653,7 @@ static void draw_list(const char *title, int count, int sel, const char* (*label
     u8g2_SetFont(&g_u8g2, u8g2_font_6x10_tf);
     u8g2_DrawStr(&g_u8g2, 0, 10, title);
     u8g2_DrawHLine(&g_u8g2, 0, 12, 128);
-    if(right) u8g2_DrawStr(&g_u8g2, 86, 10, right);
+    if(right) u8g2_DrawStr(&g_u8g2, 82, 10, right);
 
     for(int i=0;i<count;i++){
         int y = 24 + i * 10;
@@ -571,6 +667,20 @@ static void draw_list(const char *title, int count, int sel, const char* (*label
         }
     }
     u8g2_SendBuffer(&g_u8g2);
+}
+
+static void draw_settings_items(void){
+    char right[24];
+    if(settings_value_edit){
+        snprintf(right, sizeof(right), "EDIT");
+    } else {
+        settings_item_value_str(settings_cat_idx, settings_item_idx, right, sizeof(right));
+    }
+    draw_list(settings_cat_label(settings_cat_idx),
+              settings_item_count(settings_cat_idx),
+              settings_item_idx,
+              current_settings_item_label,
+              right);
 }
 
 static void draw_manual(void){
@@ -821,37 +931,66 @@ int main(void){
                     if(ev == EVT_CCW){ main_idx--; if(main_idx < 0) main_idx = 0; }
                     if(ev == EVT_BACK_DOWN) screen = SCR_HOME;
                     if(ev == EVT_CONFIRM){
-                        if(main_idx == 0){ screen = SCR_SETTINGS; settings_idx = 0; }
-                        else if(main_idx == 1){ screen = SCR_MANUAL; manual_idx = 0; }
+                        if(main_idx == 0){
+                            screen = SCR_SETTINGS;
+                            settings_cat_idx = 0;
+                        }
+                        else if(main_idx == 1){
+                            screen = SCR_MANUAL;
+                            manual_idx = 0;
+                        }
                         else screen = SCR_HOME;
                     }
                 }
                 else if(screen == SCR_SETTINGS){
-                    if(ev == EVT_CW){ settings_idx++; if(settings_idx > 6) settings_idx = 6; }
-                    if(ev == EVT_CCW){ settings_idx--; if(settings_idx < 0) settings_idx = 0; }
-                    if(ev == EVT_BACK_DOWN) screen = SCR_MENU;
-                    if(ev == EVT_CONFIRM) screen = SCR_SETTINGS_EDIT;
-                }
-                else if(screen == SCR_SETTINGS_EDIT){
                     if(ev == EVT_CW){
-                        if(settings_idx == 0) FEED_SPS = clamp_i(FEED_SPS + 200, 200, 30000);
-                        if(settings_idx == 1) REV_SPS  = clamp_i(REV_SPS + 200, 200, 30000);
-                        if(settings_idx == 2) AUTO_SPS = clamp_i(AUTO_SPS + 200, 200, 30000);
-                        if(settings_idx == 3) MOTION_TIMEOUT_MS = clamp_i(MOTION_TIMEOUT_MS + 100, 100, 5000);
-                        if(settings_idx == 4) MOTION_STARTUP_MS = clamp_i(MOTION_STARTUP_MS + 500, 0, 30000);
-                        if(settings_idx == 5) MOTION_FAULT_ENABLED = !MOTION_FAULT_ENABLED;
-                        if(settings_idx == 6) RUNOUT_COOLDOWN_MS = clamp_i(RUNOUT_COOLDOWN_MS + 1000, 1000, 60000);
+                        settings_cat_idx++;
+                        if(settings_cat_idx >= SETCAT_COUNT) settings_cat_idx = SETCAT_COUNT - 1;
                     }
                     if(ev == EVT_CCW){
-                        if(settings_idx == 0) FEED_SPS = clamp_i(FEED_SPS - 200, 200, 30000);
-                        if(settings_idx == 1) REV_SPS  = clamp_i(REV_SPS - 200, 200, 30000);
-                        if(settings_idx == 2) AUTO_SPS = clamp_i(AUTO_SPS - 200, 200, 30000);
-                        if(settings_idx == 3) MOTION_TIMEOUT_MS = clamp_i(MOTION_TIMEOUT_MS - 100, 100, 5000);
-                        if(settings_idx == 4) MOTION_STARTUP_MS = clamp_i(MOTION_STARTUP_MS - 500, 0, 30000);
-                        if(settings_idx == 5) MOTION_FAULT_ENABLED = !MOTION_FAULT_ENABLED;
-                        if(settings_idx == 6) RUNOUT_COOLDOWN_MS = clamp_i(RUNOUT_COOLDOWN_MS - 1000, 1000, 60000);
+                        settings_cat_idx--;
+                        if(settings_cat_idx < 0) settings_cat_idx = 0;
                     }
-                    if(ev == EVT_CONFIRM || ev == EVT_BACK_DOWN) screen = SCR_SETTINGS;
+                    if(ev == EVT_BACK_DOWN) screen = SCR_MENU;
+                    if(ev == EVT_CONFIRM){
+                        settings_item_idx = 0;
+                        settings_value_edit = false;
+                        screen = SCR_SETTINGS_EDIT;
+                    }
+                }
+                else if(screen == SCR_SETTINGS_EDIT){
+                    int item_count = settings_item_count(settings_cat_idx);
+
+                    if(!settings_value_edit){
+                        if(ev == EVT_CW){
+                            settings_item_idx++;
+                            if(settings_item_idx >= item_count) settings_item_idx = item_count - 1;
+                        }
+                        if(ev == EVT_CCW){
+                            settings_item_idx--;
+                            if(settings_item_idx < 0) settings_item_idx = 0;
+                        }
+                        if(ev == EVT_BACK_DOWN){
+                            screen = SCR_SETTINGS;
+                        }
+                        if(ev == EVT_CONFIRM){
+                            if(settings_item_is_bool(settings_cat_idx, settings_item_idx)){
+                                settings_adjust(settings_cat_idx, settings_item_idx, 1);
+                            } else {
+                                settings_value_edit = true;
+                            }
+                        }
+                    } else {
+                        if(ev == EVT_CW){
+                            settings_adjust(settings_cat_idx, settings_item_idx, +1);
+                        }
+                        if(ev == EVT_CCW){
+                            settings_adjust(settings_cat_idx, settings_item_idx, -1);
+                        }
+                        if(ev == EVT_CONFIRM || ev == EVT_BACK_DOWN){
+                            settings_value_edit = false;
+                        }
+                    }
                 }
                 else if(screen == SCR_MANUAL){
                     if(ev == EVT_CW){ manual_idx++; if(manual_idx > 2) manual_idx = 2; }
@@ -1096,18 +1235,10 @@ int main(void){
                 draw_list("Menu", 3, main_idx, main_label, NULL);
             }
             else if(screen == SCR_SETTINGS){
-                draw_list("Settings", 7, settings_idx, settings_label, NULL);
+                draw_list("Settings", SETCAT_COUNT, settings_cat_idx, settings_cat_label, NULL);
             }
             else if(screen == SCR_SETTINGS_EDIT){
-                char v[24] = {0};
-                if(settings_idx == 0) snprintf(v, sizeof(v), "%d", FEED_SPS);
-                if(settings_idx == 1) snprintf(v, sizeof(v), "%d", REV_SPS);
-                if(settings_idx == 2) snprintf(v, sizeof(v), "%d", AUTO_SPS);
-                if(settings_idx == 3) snprintf(v, sizeof(v), "%d", MOTION_TIMEOUT_MS);
-                if(settings_idx == 4) snprintf(v, sizeof(v), "%d", MOTION_STARTUP_MS);
-                if(settings_idx == 5) snprintf(v, sizeof(v), "%s", MOTION_FAULT_ENABLED ? "ON" : "OFF");
-                if(settings_idx == 6) snprintf(v, sizeof(v), "%d", RUNOUT_COOLDOWN_MS);
-                draw_list("Edit", 7, settings_idx, settings_label, v);
+                draw_settings_items();
             }
             else if(screen == SCR_MANUAL){
                 draw_manual();
