@@ -1473,30 +1473,8 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             cmd_reply("ER", "ARG");
         } else {
             tmc_t *t = (ln == 1) ? &g_tmc1 : &g_tmc2;
-            uint8_t req[4];
-            req[0] = 0x05;
-            req[1] = t->addr;
-            req[2] = TMC_REG_GSTAT & 0x7Fu;
-            req[3] = tmc_crc8(req, 3);
-
-            uint32_t ints = save_and_disable_interrupts();
-            for (int i = 0; i < 4; i++) {
-                tx_byte(t->tx_pin, req[i]);
-            }
-            gpio_set_dir(t->tx_pin, GPIO_IN);
-            gpio_pull_up(t->tx_pin);
-            gpio_set_dir(t->rx_pin, GPIO_IN);
-            gpio_pull_up(t->rx_pin);
-
             bool tx_low = false, rx_low = false;
-            absolute_time_t end = make_timeout_time_us(2000);
-            while (!time_reached(end)) {
-                if (!gpio_get(t->tx_pin)) tx_low = true;
-                if (!gpio_get(t->rx_pin)) rx_low = true;
-            }
-            gpio_pull_down(t->rx_pin);
-            restore_interrupts(ints);
-
+            tmc_probe_rx(t, &tx_low, &rx_low);
             char out[40];
             snprintf(out, sizeof(out), "%d:TX=%d,RX=%d", ln, tx_low ? 1 : 0, rx_low ? 1 : 0);
             cmd_reply("OK", out);

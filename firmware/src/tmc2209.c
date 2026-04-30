@@ -242,6 +242,36 @@ bool tmc_read_sg_result(tmc_t *t, uint16_t *out) {
 }
 
 
+bool tmc_probe_rx(tmc_t *t, bool *tx_low_out, bool *rx_low_out) {
+    uint8_t req[4];
+    req[0] = 0x05;
+    req[1] = t->addr;
+    req[2] = TMC_REG_GSTAT & 0x7Fu;
+    req[3] = tmc_crc8(req, 3);
+
+    uint32_t ints = save_and_disable_interrupts();
+    for (int i = 0; i < 4; i++) {
+        tx_byte(t->tx_pin, req[i]);
+    }
+    gpio_set_dir(t->tx_pin, GPIO_IN);
+    gpio_pull_up(t->tx_pin);
+    gpio_set_dir(t->rx_pin, GPIO_IN);
+    gpio_pull_up(t->rx_pin);
+
+    bool tx_low = false, rx_low = false;
+    absolute_time_t end = make_timeout_time_us(2000);
+    while (!time_reached(end)) {
+        if (!gpio_get(t->tx_pin)) tx_low = true;
+        if (!gpio_get(t->rx_pin)) rx_low = true;
+    }
+    gpio_pull_down(t->rx_pin);
+    restore_interrupts(ints);
+
+    *tx_low_out = tx_low;
+    *rx_low_out = rx_low;
+    return true;
+}
+
 bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
     t->tx_pin = tx_pin;
     t->rx_pin = rx_pin;

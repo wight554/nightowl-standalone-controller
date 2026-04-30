@@ -1,6 +1,7 @@
 
 # build outputs
 build/
+build_local/
 **/build/
 *.elf
 *.uf2

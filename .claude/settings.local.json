@@ -10,7 +10,11 @@
       "Bash(git -C /Users/Volodymyr_Zhdanov/playground/nightowl-standalone-controller diff --stat HEAD)",
       "Bash(git -C /Users/Volodymyr_Zhdanov/playground/nightowl-standalone-controller status --short)",
       "mcp__context7__resolve-library-id",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(arm-none-eabi-gcc --version)",
+      "Bash(cmake --version)",
+      "Bash(cmake -G Ninja -B build_local firmware -DPICO_SDK_PATH=~/pico-sdk)",
+      "Bash(ninja *)"
     ]
   }
 }
