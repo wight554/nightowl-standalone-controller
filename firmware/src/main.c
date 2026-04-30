@@ -32,14 +32,16 @@
 #define PIN_M1_EN        8
 #define PIN_M1_DIR       9
 #define PIN_M1_STEP      10
-#define PIN_M1_UART      11
-#define PIN_M1_DIAG      13
+#define PIN_M1_UART_TX   11
+#define PIN_M1_UART_RX   13
+#define PIN_M1_DIAG      13  // same as UART_RX on ERB
 
 #define PIN_M2_EN        14
 #define PIN_M2_DIR       15
 #define PIN_M2_STEP      16
-#define PIN_M2_UART      17
-#define PIN_M2_DIAG      19
+#define PIN_M2_UART_TX   17
+#define PIN_M2_UART_RX   19
+#define PIN_M2_DIAG      19  // same as UART_RX on ERB
 
 #define PIN_SERVO        23
 #define PIN_NEOPIXEL     21
@@ -1377,7 +1379,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         settings_save();
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "VR")) {
-        cmd_reply("OK", "NIGHTOWL_ERB_0.1.0");
+        cmd_reply("OK", "NIGHTOWL_ERB_0.1.1");
     } else if (!strcmp(cmd, "?")) {
         status_dump();
     } else if (!strcmp(cmd, "SET")) {
@@ -1547,8 +1549,8 @@ int main(void) {
     motor_init(&m1, PIN_M1_EN, PIN_M1_DIR, PIN_M1_STEP, M1_DIR_INVERT);
     motor_init(&m2, PIN_M2_EN, PIN_M2_DIR, PIN_M2_STEP, M2_DIR_INVERT);
 
-    tmc_init(&g_tmc1, PIN_M1_UART, 0);
-    tmc_init(&g_tmc2, PIN_M2_UART, 1);
+    tmc_init(&g_tmc1, PIN_M1_UART_TX, PIN_M1_UART_RX, 0);
+    tmc_init(&g_tmc2, PIN_M2_UART_TX, PIN_M2_UART_RX, 1);
 
     lane_setup(&g_lane1, PIN_L1_IN, PIN_L1_OUT, m1, 1, PIN_M1_DIAG, &g_tmc1);
     lane_setup(&g_lane2, PIN_L2_IN, PIN_L2_OUT, m2, 2, PIN_M2_DIAG, &g_tmc2);

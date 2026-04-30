@@ -99,9 +99,9 @@ bool tmc_write(tmc_t *t, uint8_t reg, uint32_t val) {
 
     uint32_t ints = save_and_disable_interrupts();
     for (int i = 0; i < 8; i++) {
-        tx_byte(t->pin, buf[i]);
+        tx_byte(t->tx_pin, buf[i]);
     }
-    line_idle(t->pin);
+    line_idle(t->tx_pin);
     restore_interrupts(ints);
     return true;
 }
@@ -117,22 +117,22 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
 
     uint32_t ints = save_and_disable_interrupts();
     for (int i = 0; i < 4; i++) {
-        tx_byte(t->pin, req[i]);
+        tx_byte(t->tx_pin, req[i]);
     }
-    line_idle(t->pin);
+    line_idle(t->rx_pin);
 
-    if (!rx_wait_start(t->pin, 2000)) {
+    if (!rx_wait_start(t->rx_pin, 2000)) {
         restore_interrupts(ints);
         return false;
     }
-    rep[0] = rx_byte_after_start(t->pin);
+    rep[0] = rx_byte_after_start(t->rx_pin);
 
     for (int i = 1; i < 8; i++) {
-        if (!rx_wait_start(t->pin, 200)) {
+        if (!rx_wait_start(t->rx_pin, 200)) {
             restore_interrupts(ints);
             return false;
         }
-        rep[i] = rx_byte_after_start(t->pin);
+        rep[i] = rx_byte_after_start(t->rx_pin);
     }
     restore_interrupts(ints);
 
@@ -228,12 +228,14 @@ bool tmc_read_sg_result(tmc_t *t, uint16_t *out) {
     return true;
 }
 
-bool tmc_init(tmc_t *t, uint pin, uint8_t addr) {
-    t->pin = pin;
+bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
+    t->tx_pin = tx_pin;
+    t->rx_pin = rx_pin;
     t->addr = addr;
-
-    gpio_init(pin);
-    line_idle(pin);
+    gpio_init(tx_pin);
+    line_idle(tx_pin);
+    gpio_init(rx_pin);
+    line_idle(rx_pin);
 
     return true;
 }
