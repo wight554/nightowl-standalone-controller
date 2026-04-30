@@ -8,7 +8,6 @@
 
 #define TMC_BAUD 115200u
 #define TMC_BIT_NS 8681u
-#define TMC_HALF_BIT_NS (TMC_BIT_NS / 2u)
 
 static inline void tmc_delay_ns(uint32_t ns) {
     busy_wait_us_32((ns + 999u) / 1000u);
@@ -42,30 +41,30 @@ static void tx_byte(uint pin, uint8_t b) {
     tmc_delay_ns(TMC_BIT_NS);
 }
 
-static bool rx_wait_start(uint pin, uint32_t timeout_us) {
+// Returns true and captures edge timestamp when start bit (LOW) detected within timeout.
+// Each 9µs rounded delay accumulates ~320ns/bit drift; capturing the edge time once
+// and computing absolute sample offsets below eliminates that cumulative error.
+static bool rx_wait_start(uint pin, uint32_t timeout_us, uint64_t *edge_us_out) {
     absolute_time_t deadline = make_timeout_time_us(timeout_us);
     line_idle(pin);
-
     while (gpio_get(pin)) {
-        if (time_reached(deadline)) {
-            return false;
-        }
+        if (time_reached(deadline)) return false;
     }
-
-    tmc_delay_ns(TMC_HALF_BIT_NS);
-    tmc_delay_ns(TMC_BIT_NS);
+    *edge_us_out = time_us_64();
     return true;
 }
 
-static uint8_t rx_byte_after_start(uint pin) {
+// Sample 8 data bits at absolute offsets from the detected start-bit edge.
+// Center of data bit i = edge + (2i+3) * half_bit = edge + (2i+3) * 4340 ns.
+// Using absolute timestamps keeps each sample within ~5% of center regardless
+// of loop overhead, unlike the relative-delay approach that drifted ~37% by bit 7.
+static uint8_t rx_byte_from_edge(uint pin, uint64_t edge_us) {
     uint8_t b = 0;
     for (int i = 0; i < 8; i++) {
-        if (gpio_get(pin)) {
-            b |= (1u << i);
-        }
-        tmc_delay_ns(TMC_BIT_NS);
+        uint64_t sample_us = edge_us + ((uint64_t)(2 * i + 3) * 4340u + 500u) / 1000u;
+        busy_wait_until(from_us_since_boot(sample_us));
+        if (gpio_get(pin)) b |= (1u << i);
     }
-    tmc_delay_ns(TMC_HALF_BIT_NS);
     return b;
 }
 
@@ -109,6 +108,7 @@ bool tmc_write(tmc_t *t, uint8_t reg, uint32_t val) {
 bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
     uint8_t req[4];
     uint8_t rep[8];
+    uint64_t edge_us;
 
     req[0] = 0x05;
     req[1] = t->addr;
@@ -122,20 +122,20 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
     line_idle(t->tx_pin);
     tmc_delay_ns(TMC_BIT_NS * 4); // TMC replies after 8 bit-times; poll before that window
 
-    if (!rx_wait_start(t->rx_pin, 2000)) {
+    if (!rx_wait_start(t->rx_pin, 2000, &edge_us)) {
         gpio_pull_down(t->rx_pin);
         restore_interrupts(ints);
         return false;
     }
-    rep[0] = rx_byte_after_start(t->rx_pin);
+    rep[0] = rx_byte_from_edge(t->rx_pin, edge_us);
 
     for (int i = 1; i < 8; i++) {
-        if (!rx_wait_start(t->rx_pin, 200)) {
+        if (!rx_wait_start(t->rx_pin, 200, &edge_us)) {
             gpio_pull_down(t->rx_pin);
             restore_interrupts(ints);
             return false;
         }
-        rep[i] = rx_byte_after_start(t->rx_pin);
+        rep[i] = rx_byte_from_edge(t->rx_pin, edge_us);
     }
     gpio_pull_down(t->rx_pin); // restore DIAG pin state (active-high, normally pull-down)
     restore_interrupts(ints);
