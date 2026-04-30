@@ -119,7 +119,8 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
     for (int i = 0; i < 4; i++) {
         tx_byte(t->tx_pin, req[i]);
     }
-    line_idle(t->rx_pin);
+    line_idle(t->tx_pin);
+    tmc_delay_ns(TMC_BIT_NS * 8);
 
     if (!rx_wait_start(t->rx_pin, 2000)) {
         restore_interrupts(ints);
@@ -236,6 +237,5 @@ bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
     line_idle(tx_pin);
     gpio_init(rx_pin);
     line_idle(rx_pin);
-
     return true;
 }

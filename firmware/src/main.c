@@ -1550,7 +1550,7 @@ int main(void) {
     motor_init(&m2, PIN_M2_EN, PIN_M2_DIR, PIN_M2_STEP, M2_DIR_INVERT);
 
     tmc_init(&g_tmc1, PIN_M1_UART_TX, PIN_M1_UART_RX, 0);
-    tmc_init(&g_tmc2, PIN_M2_UART_TX, PIN_M2_UART_RX, 1);
+    tmc_init(&g_tmc2, PIN_M2_UART_TX, PIN_M2_UART_RX, 0);
 
     lane_setup(&g_lane1, PIN_L1_IN, PIN_L1_OUT, m1, 1, PIN_M1_DIAG, &g_tmc1);
     lane_setup(&g_lane2, PIN_L2_IN, PIN_L2_OUT, m2, 2, PIN_M2_DIAG, &g_tmc2);
