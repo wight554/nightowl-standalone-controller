@@ -23,13 +23,21 @@ static inline void line_drive_low(uint pin) {
     gpio_set_dir(pin, GPIO_OUT);
 }
 
+// ERB V2.0 has no external pull-up on PDN_UART; the TMC's internal PDN pull-down
+// overcomes the RP2040 weak pull-up (~50kΩ). Drive HIGH actively so '1' bits and
+// stop bits reach the required idle-high level on the wire.
+static inline void line_drive_high(uint pin) {
+    gpio_put(pin, 1);
+    gpio_set_dir(pin, GPIO_OUT);
+}
+
 static void tx_byte(uint pin, uint8_t b) {
     line_drive_low(pin);
     tmc_delay_ns(TMC_BIT_NS);
 
     for (int i = 0; i < 8; i++) {
         if (b & 0x01) {
-            line_idle(pin);
+            line_drive_high(pin);
         } else {
             line_drive_low(pin);
         }
@@ -37,7 +45,7 @@ static void tx_byte(uint pin, uint8_t b) {
         tmc_delay_ns(TMC_BIT_NS);
     }
 
-    line_idle(pin);
+    line_drive_high(pin);  // stop bit — must be driven, not floated
     tmc_delay_ns(TMC_BIT_NS);
 }
 
@@ -310,12 +318,17 @@ bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
     t->tx_pin = tx_pin;
     t->rx_pin = rx_pin;
     t->addr = addr;
+    // Precondition: actively drive tx_pin HIGH for 10ms to overcome the TMC's
+    // internal PDN pull-down and establish idle-high before first UART byte.
     gpio_init(tx_pin);
-    line_idle(tx_pin);
-    // rx_pin is DIAG (active-high stall signal, normally LOW); pull down so the
-    // TMC's LOW output doesn't fight the GPIO and to detect rising-edge stalls.
+    gpio_put(tx_pin, 1);
+    gpio_set_dir(tx_pin, GPIO_OUT);
+    sleep_ms(10);
+    line_idle(tx_pin);  // release to INPUT/PULL_UP; line stays HIGH once TMC
+                        // enables pdn_disable=1 (its own pull-up activates)
+    // rx_pin is DIAG (active-high stall); pull-up prevents floating during init.
     gpio_init(rx_pin);
     gpio_set_dir(rx_pin, GPIO_IN);
-    gpio_pull_down(rx_pin);
+    gpio_pull_up(rx_pin);
     return true;
 }
