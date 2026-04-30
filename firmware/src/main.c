@@ -8,6 +8,7 @@
 #include "pico/bootrom.h"
 #include "pico/flash.h"
 #include "pico/stdlib.h"
+#include "config.h"
 
 #include "hardware/clocks.h"
 #include "hardware/flash.h"
@@ -46,14 +47,14 @@
 #define PIN_SERVO        23
 #define PIN_NEOPIXEL     21
 
-#define M1_DIR_INVERT    0
-#define M2_DIR_INVERT    1
+#define M1_DIR_INVERT    CONF_M1_DIR_INVERT
+#define M2_DIR_INVERT    CONF_M2_DIR_INVERT
 #define EN_ACTIVE_LOW    1
 
 // ===================== Tunables =====================
-static int FEED_SPS = 5000;
-static int REV_SPS = 4000;
-static int AUTO_SPS = 6000;
+static int FEED_SPS = CONF_FEED_SPS;
+static int REV_SPS = CONF_REV_SPS;
+static int AUTO_SPS = CONF_AUTO_SPS;
 
 static int MOTION_STARTUP_MS = 10000;
 
@@ -65,9 +66,9 @@ static bool REQUIRE_Y_EMPTY_SWAP = true;
 static int RAMP_STEP_SPS = 200;
 static int RAMP_TICK_MS = 5;
 
-static int TMC_RUN_CURRENT_MA = 600;
-static int TMC_HOLD_CURRENT_MA = 200;
-static int TMC_MICROSTEPS = 16;
+static int TMC_RUN_CURRENT_MA = 850;
+static int TMC_HOLD_CURRENT_MA = 300;
+static int TMC_MICROSTEPS = CONF_MICROSTEPS;
 static bool TMC_SPREADCYCLE = true;
 static int TMC_SGT_L1 = 80;
 static int TMC_SGT_L2 = 80;
@@ -100,7 +101,7 @@ static float BUF_HALF_TRAVEL_MM = 5.0f;
 static float SYNC_RATIO = 1.0f;
 static bool BUF_INVERT = false;
 
-static float MM_PER_STEP = 0.0125f; // TUNE: gear + microstep derived.
+static float MM_PER_STEP = CONF_MM_PER_STEP; // TUNE: gear + microstep derived.
 
 // ===================== Helpers =====================
 static inline int clamp_i(int v, int lo, int hi) {
@@ -1033,9 +1034,9 @@ static uint32_t crc32_buf(const uint8_t *data, size_t len) {
 }
 
 static void settings_defaults(void) {
-    FEED_SPS = 5000;
-    REV_SPS = 4000;
-    AUTO_SPS = 6000;
+    FEED_SPS = CONF_FEED_SPS;
+    REV_SPS = CONF_REV_SPS;
+    AUTO_SPS = CONF_AUTO_SPS;
 
     SYNC_MAX_SPS = 8000;
     SYNC_MIN_SPS = 0;
@@ -1055,9 +1056,9 @@ static void settings_defaults(void) {
     TMC_SGT_L2 = 80;
     TMC_TCOOLTHRS = 400;
 
-    TMC_RUN_CURRENT_MA = 600;
-    TMC_HOLD_CURRENT_MA = 200;
-    TMC_MICROSTEPS = 16;
+    TMC_RUN_CURRENT_MA = 850;
+    TMC_HOLD_CURRENT_MA = 300;
+    TMC_MICROSTEPS = CONF_MICROSTEPS;
     TMC_SPREADCYCLE = true;
 
     SERVO_OPEN_US = 500;
@@ -1379,7 +1380,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         settings_save();
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "VR")) {
-        cmd_reply("OK", "NIGHTOWL_ERB_0.1.1");
+        cmd_reply("OK", CONF_FW_VERSION);
     } else if (!strcmp(cmd, "?")) {
         status_dump();
     } else if (!strcmp(cmd, "SET")) {

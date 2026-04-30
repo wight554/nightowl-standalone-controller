@@ -120,20 +120,20 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
         tx_byte(t->tx_pin, req[i]);
     }
     line_idle(t->tx_pin);
-    tmc_delay_ns(TMC_BIT_NS * 8);
+    tmc_delay_ns(TMC_BIT_NS * 50);
 
-    if (!rx_wait_start(t->rx_pin, 2000)) {
+    if (!rx_wait_start(t->tx_pin, 2000)) {
         restore_interrupts(ints);
         return false;
     }
-    rep[0] = rx_byte_after_start(t->rx_pin);
+    rep[0] = rx_byte_after_start(t->tx_pin);
 
     for (int i = 1; i < 8; i++) {
-        if (!rx_wait_start(t->rx_pin, 200)) {
+        if (!rx_wait_start(t->tx_pin, 200)) {
             restore_interrupts(ints);
             return false;
         }
-        rep[i] = rx_byte_after_start(t->rx_pin);
+        rep[i] = rx_byte_after_start(t->tx_pin);
     }
     restore_interrupts(ints);
 
@@ -152,18 +152,24 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
 }
 
 static uint8_t clamp_u5_from_ma(int ma) {
-    // TUNE: This assumes ERB Rsense ~= 0.11R and maps practical current to IRUN/IHOLD.
-    // Keep conservative default mapping; refine empirically during bringup.
-    if (ma <= 0) {
-        return 0;
+    // TMC2209 current to CS — matches Klipper TMCCurrentHelper formula
+    // CS = 32 * Irms * (Rsense + 0.020) * sqrt(2) / Vsense_ref - 1
+    // Try VSENSE=0 (Vref=0.32V) first; if CS<16 switch to VSENSE=1 (Vref=0.18V)
+    // Caller must set VSENSE bit in CHOPCONF to match.
+    // For ERB Rsense=0.110: effective = 0.130
+    // At 800mA VSENSE=0: CS=13 (<16) → VSENSE=1: CS=25 ✓ matches spreadsheet
+    if (ma <= 0) return 0;
+    float irms   = (float)ma / 1000.0f;
+    float reff   = 0.110f + 0.020f;          // Rsense + 20mΩ per TMC docs
+    float sqrt2  = 1.41421356f;
+    // Try VSENSE=0 first
+    int v = (int)(32.0f * irms * reff * sqrt2 / 0.32f - 1.0f + 0.5f);
+    if (v < 16) {
+        // Switch to VSENSE=1 for better CS resolution
+        v = (int)(32.0f * irms * reff * sqrt2 / 0.18f - 1.0f + 0.5f);
     }
-    int v = (ma * 31) / 1000;
-    if (v < 1) {
-        v = 1;
-    }
-    if (v > 31) {
-        v = 31;
-    }
+    if (v < 0)  v = 0;
+    if (v > 31) v = 31;
     return (uint8_t)v;
 }
 
@@ -190,24 +196,27 @@ bool tmc_set_microsteps(tmc_t *t, int microsteps) {
     }
 
     uint32_t chop = 0;
-    if (!tmc_read(t, TMC_REG_CHOPCONF, &chop)) {
-        return false;
-    }
-    chop &= ~(0x0Fu << 24);
-    chop |= ((uint32_t)mres << 24);
+    // CHOPCONF register layout (TMC2209 datasheet):
+    // bits[3:0]   TOFF=3
+    // bits[6:4]   HSTRT=7  (register value direct from spreadsheet)
+    // bits[10:7]  HEND=10  (register value direct from spreadsheet)
+    // bits[16:15] TBL=1
+    // bit[17]     VSENSE=1
+    // bits[27:24] MRES
+    chop |= (3u  << 0);    // TOFF=3
+    chop |= (7u  << 4);    // HSTRT=7
+    chop |= (10u << 7);    // HEND=10
+    chop |= (1u  << 15);   // TBL=1
+    chop |= (1u  << 17);   // VSENSE=1
+    chop |= ((uint32_t)mres << 24); // MRES
     return tmc_write(t, TMC_REG_CHOPCONF, chop);
 }
 
 bool tmc_set_spreadcycle(tmc_t *t, bool spreadcycle) {
     uint32_t gconf = 0;
-    if (!tmc_read(t, TMC_REG_GCONF, &gconf)) {
-        return false;
-    }
-    if (spreadcycle) {
-        gconf |= (1u << 2);
-    } else {
-        gconf &= ~(1u << 2);
-    }
+    // Write GCONF without read — reads fail on ERB
+    // bit2=en_spreadcycle, bit6=pdn_disable, bit7=mstep_reg_select
+    if (spreadcycle) gconf |= (1u << 2);
     gconf |= (1u << 6) | (1u << 7);
     return tmc_write(t, TMC_REG_GCONF, gconf);
 }
@@ -228,6 +237,7 @@ bool tmc_read_sg_result(tmc_t *t, uint16_t *out) {
     *out = (uint16_t)(v & 0x03FFu);
     return true;
 }
+
 
 bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
     t->tx_pin = tx_pin;
