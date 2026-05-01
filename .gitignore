@@ -10,6 +10,8 @@ build_local/
 *.map
 *.dis
 
+.claude/settings.local
+
 # ninja/cmake junk
 .ninja_deps
 .ninja_log
