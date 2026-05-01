@@ -381,7 +381,7 @@ static cutter_ctx_t g_cut = {0};
 static tc_ctx_t g_tc_ctx = { .state = TC_IDLE };
 
 static volatile uint32_t g_now_ms = 0;
-static int active_lane = 1;
+static int active_lane = 0;
 static bool toolhead_has_filament = false;
 
 static bool sync_enabled = false;
@@ -409,8 +409,28 @@ static void cmd_event(const char *type, const char *data);
 static inline bool lane_in_present(lane_t *L) { return on_al(&L->in_sw); }
 static inline bool lane_out_present(lane_t *L) { return on_al(&L->out_sw); }
 
+static int detect_active_lane_from_out(void) {
+    bool l1 = lane_out_present(&g_lane1);
+    bool l2 = lane_out_present(&g_lane2);
+    if (l1 && !l2) return 1;
+    if (l2 && !l1) return 2;
+    return 0;
+}
+
+static void set_active_lane(int lane) {
+    active_lane = lane;
+    if (lane == 1 || lane == 2) {
+        char lane_s[2] = { (char)('0' + lane), 0 };
+        cmd_event("ACTIVE", lane_s);
+    } else {
+        cmd_event("ACTIVE", "NONE");
+    }
+}
+
 static inline lane_t *lane_ptr(int lane) {
-    return (lane == 1) ? &g_lane1 : &g_lane2;
+    if (lane == 1) return &g_lane1;
+    if (lane == 2) return &g_lane2;
+    return NULL;
 }
 
 static inline int other_lane(int lane) {
@@ -461,7 +481,12 @@ static void lane_tick(lane_t *L, uint32_t now_ms) {
     }
 
     if (L->task == TASK_AUTOLOAD) {
-        if (lane_out_present(L) || (int32_t)(now_ms - L->autoload_deadline_ms) >= 0) {
+        if (lane_out_present(L)) {
+            lane_stop(L);
+            if (active_lane != L->lane_id) {
+                set_active_lane(L->lane_id);
+            }
+        } else if ((int32_t)(now_ms - L->autoload_deadline_ms) >= 0) {
             lane_stop(L);
         }
     }
@@ -657,6 +682,7 @@ static void tc_enter_error(const char *reason) {
 static void tc_start(int target_lane, uint32_t now_ms) {
     if (g_tc_ctx.state != TC_IDLE) return;
     if (target_lane != 1 && target_lane != 2) return;
+    if (active_lane != 1 && active_lane != 2) return;
 
     g_tc_ctx.target_lane = target_lane;
     g_tc_ctx.from_lane = active_lane;
@@ -925,6 +951,10 @@ static void baseline_update_on_settle(uint32_t mid_dwell_ms) {
 
 static void sync_apply_to_active(void) {
     lane_t *A = lane_ptr(active_lane);
+    if (!A) {
+        sync_current_sps = 0;
+        return;
+    }
     if (sync_current_sps > 0) {
         if (A->task != TASK_FEED) {
             lane_start(A, TASK_FEED, sync_current_sps, true, g_now_ms, 0);
@@ -1395,6 +1425,10 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
     if (!strcmp(cmd, "TC")) {
         int ln = atoi(p);
         if (ln == 1 || ln == 2) {
+            if (active_lane != 1 && active_lane != 2) {
+                cmd_reply("ER", "NO_ACTIVE_LANE");
+                return;
+            }
             tc_start(ln, now_ms);
             cmd_reply("OK", NULL);
         } else {
@@ -1410,16 +1444,28 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         }
     } else if (!strcmp(cmd, "LO")) {
         lane_t *A = lane_ptr(active_lane);
+        if (!A) {
+            cmd_reply("ER", "NO_ACTIVE_LANE");
+            return;
+        }
         sync_enabled = false;
         lane_start(A, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "UL")) {
         lane_t *A = lane_ptr(active_lane);
+        if (!A) {
+            cmd_reply("ER", "NO_ACTIVE_LANE");
+            return;
+        }
         sync_enabled = false;
         lane_start(A, TASK_UNLOAD, REV_SPS, false, now_ms, 0);
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "CU")) {
         lane_t *A = lane_ptr(active_lane);
+        if (!A) {
+            cmd_reply("ER", "NO_ACTIVE_LANE");
+            return;
+        }
         sync_enabled = false;
         cutter_start(A, now_ms);
         cmd_reply("OK", NULL);
@@ -1795,6 +1841,7 @@ int main(void) {
 
     settings_load();
     g_buf.entered_ms = to_ms_since_boot(get_absolute_time());
+    active_lane = detect_active_lane_from_out();
     prev_lane1_in_present = lane_in_present(&g_lane1);
     prev_lane2_in_present = lane_in_present(&g_lane2);
 

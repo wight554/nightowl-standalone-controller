@@ -69,6 +69,13 @@ Core control:
 - `ST:`: stop motors and abort active operations
 - `?:` status snapshot (`I1/O1/I2/O2/YS`, tasks, sync state, `AP`)
 
+Active lane behavior:
+
+- `LN` is active lane (`1` or `2`), or `0` when unknown.
+- Boot initialization uses OUT sensors: only `O1` active -> `LN:1`, only `O2` active -> `LN:2`, both/none -> `LN:0`.
+- During preload/autoload, when a lane reaches OUT it becomes active automatically.
+- If `LN:0`, `LO`, `UL`, `CU`, and `TC` return `ER:NO_ACTIVE_LANE` until you select with `T:1`/`T:2` or preload reaches OUT.
+
 Runtime toggles (`SET:/GET:`):
 
 - `SM` (`0/1`): sync mode enable

@@ -173,6 +173,12 @@ Related runtime boolean state:
 - `TS:<0|1>` - host-reported toolhead filament presence
 - `AP:<0|1>` - appears in `?:` status and shows AUTO_PRELOAD state
 
+Active lane (`LN`) in `?:`:
+
+- `LN:1` or `LN:2` means active lane is known.
+- `LN:0` means unknown (both OUT sensors triggered, or neither).
+- If `LN:0`, lane commands `LO/UL/CU/TC` return `ER:NO_ACTIVE_LANE` until lane is selected (`T:1`/`T:2`) or preload reaches OUT.
+
 Examples:
 
 ```bash
