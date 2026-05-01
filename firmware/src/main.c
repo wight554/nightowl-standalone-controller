@@ -295,6 +295,7 @@ typedef struct lane_s {
     uint diag_pin;
     uint32_t motion_started_ms;
     bool stall_armed;
+    bool unload_out_latch;
     fault_t fault;
     int lane_id;
     uint32_t runout_block_until_ms;
@@ -453,11 +454,13 @@ static void lane_setup(lane_t *L, uint pin_in, uint pin_out, motor_t m, int lane
     L->lane_id = lane_id;
     L->runout_block_until_ms = 0;
     L->retract_deadline_ms = 0;
+    L->unload_out_latch = false;
 }
 
 static void lane_stop(lane_t *L) {
     L->task = TASK_IDLE;
     L->stall_armed = false;
+    L->unload_out_latch = false;
     L->retract_deadline_ms = 0;
     motor_stop(&L->m);
 }
@@ -467,6 +470,7 @@ static void lane_start(lane_t *L, task_t t, int sps, bool forward, uint32_t now_
     L->fault = FAULT_NONE;
     L->motion_started_ms = now_ms;
     L->stall_armed = false;
+    L->unload_out_latch = false;
     L->retract_deadline_ms = 0;
 
     if (t == TASK_AUTOLOAD) {
@@ -506,8 +510,25 @@ static void lane_tick(lane_t *L, uint32_t now_ms) {
     }
 
     if (L->task == TASK_UNLOAD && L->retract_deadline_ms != 0) {
+        // Autopreload retract: timed back-off after reaching OUT.
         if ((int32_t)(now_ms - L->retract_deadline_ms) >= 0) {
             lane_stop(L);
+        }
+    }
+
+    if (L->task == TASK_UNLOAD && L->retract_deadline_ms == 0) {
+        // Manual UL: run backward until OUT sensor clears (sensor-latch).
+        if (lane_out_present(L)) {
+            L->unload_out_latch = true;
+        }
+        if (L->unload_out_latch && !lane_out_present(L)) {
+            lane_stop(L);
+            char lane_s[2] = { (char)('0' + L->lane_id), 0 };
+            cmd_event("UNLOADED", lane_s);
+        } else if ((int32_t)(now_ms - L->autoload_deadline_ms) >= 0) {
+            // Safety timeout.
+            lane_stop(L);
+            cmd_event("UNLOAD_TIMEOUT", NULL);
         }
     }
 
@@ -1492,6 +1513,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         }
         sync_enabled = false;
         lane_start(A, TASK_UNLOAD, REV_SPS, false, now_ms, 0);
+        A->autoload_deadline_ms = now_ms + 30000u; // 30 s safety timeout
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "CU")) {
         lane_t *A = lane_ptr(active_lane);
