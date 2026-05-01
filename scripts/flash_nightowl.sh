@@ -84,14 +84,7 @@ find_rp2_mountpoint() {
     return 1
 }
 
-find_and_mount_rp2() {
-    # First check if already mounted.
-    local mounted="$(find_rp2_mountpoint || true)"
-    if [[ -n "$mounted" ]]; then
-        echo "$mounted"
-        return 0
-    fi
-
+find_rp2_device() {
     # Wait and retry loop: device may take a moment to appear after BOOT command.
     local max_retries=10
     local retry=0
@@ -125,26 +118,19 @@ find_and_mount_rp2() {
         return 1
     fi
 
-    # Try to mount at a suitable location.
-    local mount_point="/media/$USER/RPI-RP2"
-    if [[ ! -d "$mount_point" ]]; then
-        if ! mkdir -p "$mount_point" 2>/dev/null; then
-            # Fallback to /tmp if user doesn't have permission.
-            mount_point="/tmp/RPI-RP2"
-            mkdir -p "$mount_point" 2>/dev/null || return 1
-        fi
-    fi
-
-    # Try mount without sudo first, then with sudo if needed.
-    if ! mount "$rp2_dev" "$mount_point" 2>/dev/null; then
-        if ! sudo mount "$rp2_dev" "$mount_point" 2>/dev/null; then
-            echo "Failed to mount $rp2_dev at $mount_point (tried both with and without sudo)" >&2
-            return 1
-        fi
-    fi
-
-    echo "$mount_point"
+    echo "$rp2_dev"
     return 0
+}
+
+find_and_mount_rp2() {
+    # First check if already mounted.
+    local mounted="$(find_rp2_mountpoint || true)"
+    if [[ -n "$mounted" ]]; then
+        echo "$mounted"
+        return 0
+    fi
+
+    return 1
 }
 
 find_serial_port() {
@@ -254,18 +240,39 @@ else
         exit 1
     fi
 
-    echo "Attempting to locate and mount RPI-RP2 mass-storage device..."
+    # Try to find existing mount or locate the device.
     RP2_MOUNT="$(find_and_mount_rp2 || true)"
     if [[ -z "$RP2_MOUNT" ]]; then
-        echo "Error: Could not find or mount RPI-RP2 device."
-        echo "Ensure the board is in BOOT mode and connected, then rerun this script."
-        echo "Alternatively, manually mount it and rerun: sudo mount /dev/sda1 /mnt/RPI-RP2"
-        exit 1
+        # Device not already mounted, find it and mount with sudo.
+        RP2_DEV="$(find_rp2_device || true)"
+        if [[ -z "$RP2_DEV" ]]; then
+            echo "Error: Could not find RPI-RP2 device."
+            echo "Ensure the board is in BOOT mode and connected, then rerun this script."
+            exit 1
+        fi
+
+        RP2_MOUNT="/mnt/RPI-RP2"
+        echo "Found device: $RP2_DEV"
+        echo "Mounting $RP2_DEV to $RP2_MOUNT..."
+        sudo mkdir -p "$RP2_MOUNT"
+        sudo mount "$RP2_DEV" "$RP2_MOUNT" || {
+            echo "Error: Failed to mount $RP2_DEV"
+            exit 1
+        }
     fi
 
     echo "Copying UF2 to $RP2_MOUNT..."
-    cp "$UF2_PATH" "$RP2_MOUNT/"
+    sudo cp "$UF2_PATH" "$RP2_MOUNT/" || {
+        echo "Error: Failed to copy UF2 file"
+        sudo umount "$RP2_MOUNT" 2>/dev/null || true
+        exit 1
+    }
+
     sync
+    echo "Unmounting $RP2_MOUNT..."
+    sudo umount "$RP2_MOUNT" || {
+        echo "Warning: Failed to unmount $RP2_MOUNT (device may still be mounted)"
+    }
 fi
 
 echo "=== Verify ==="
