@@ -1448,57 +1448,6 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         else handled = false;
         if (handled) cmd_reply("OK", out);
         else cmd_reply("ER", "GET:UNKNOWN_PARAM");
-    } else if (!strcmp(cmd, "DR")) {
-        int ln = atoi(p);
-        if (ln != 1 && ln != 2) {
-            cmd_reply("ER", "ARG");
-        } else {
-            tmc_t *t = (ln == 1) ? &g_tmc1 : &g_tmc2;
-            uint32_t ifcnt = 0, gconf = 0, chopconf = 0;
-            bool r1 = tmc_read(t, TMC_REG_IFCNT,   &ifcnt);
-            bool r2 = tmc_read(t, TMC_REG_GCONF,   &gconf);
-            bool r3 = tmc_read(t, TMC_REG_CHOPCONF, &chopconf);
-            char out[80];
-            snprintf(out, sizeof(out),
-                "%d:IF=%u,GC=%08X,CH=%08X,OK=%d%d%d",
-                ln, (unsigned)ifcnt, (unsigned)gconf, (unsigned)chopconf,
-                r1 ? 1 : 0, r2 ? 1 : 0, r3 ? 1 : 0);
-            cmd_reply("OK", out);
-        }
-    } else if (!strcmp(cmd, "DB")) {
-        // Raw probe: send GSTAT read request, sample tx_pin and rx_pin for 2ms,
-        // report which pin(s) saw a LOW — tells us if TMC responds and on which wire
-        int ln = atoi(p);
-        if (ln != 1 && ln != 2) {
-            cmd_reply("ER", "ARG");
-        } else {
-            tmc_t *t = (ln == 1) ? &g_tmc1 : &g_tmc2;
-            // Baseline: read pins before sending anything (distinguishes DIAG-stuck-LOW from UART response)
-            bool tx_base = !gpio_get(t->tx_pin);
-            bool rx_base = !gpio_get(t->rx_pin);
-            bool tx_low = false, rx_low = false;
-            tmc_probe_rx(t, &tx_low, &rx_low);
-            char out[60];
-            snprintf(out, sizeof(out), "%d:BASE_TX=%d,BASE_RX=%d,TX=%d,RX=%d",
-                     ln, tx_base ? 1 : 0, rx_base ? 1 : 0, tx_low ? 1 : 0, rx_low ? 1 : 0);
-            cmd_reply("OK", out);
-        }
-    } else if (!strcmp(cmd, "RR")) {
-        // Raw read: send GSTAT request, capture bytes without validation
-        // N=0 → rx_wait_start timed out (no response); N=8 → full frame, check hex
-        int ln = atoi(p);
-        if (ln != 1 && ln != 2) {
-            cmd_reply("ER", "ARG");
-        } else {
-            tmc_t *t = (ln == 1) ? &g_tmc1 : &g_tmc2;
-            uint8_t buf[8] = {0};
-            int n = tmc_read_raw(t, TMC_REG_GSTAT, buf);
-            char out[50];
-            snprintf(out, sizeof(out), "%d:N=%d:%02X%02X%02X%02X%02X%02X%02X%02X",
-                     ln, n, buf[0], buf[1], buf[2], buf[3],
-                     buf[4], buf[5], buf[6], buf[7]);
-            cmd_reply("OK", out);
-        }
     } else if (!strcmp(cmd, "BOOT")) {
         cmd_reply("OK", "REBOOTING_TO_BOOTSEL");
         sleep_ms(100);

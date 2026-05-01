@@ -249,69 +249,6 @@ bool tmc_read_sg_result(tmc_t *t, uint16_t *out) {
 }
 
 
-// Returns number of bytes received (0=initial timeout, 1-7=inter-byte timeout, 8=full frame).
-// Sends a read request for reg on tx_pin and captures raw bytes without validating.
-// Use to distinguish "no response" from "garbled response".
-int tmc_read_raw(tmc_t *t, uint8_t reg, uint8_t buf[8]) {
-    uint8_t req[4];
-    uint64_t edge_us;
-
-    req[0] = 0x05;
-    req[1] = t->addr;
-    req[2] = reg & 0x7Fu;
-    req[3] = tmc_crc8(req, 3);
-
-    uint32_t ints = save_and_disable_interrupts();
-    for (int i = 0; i < 4; i++) {
-        tx_byte(t->tx_pin, req[i]);
-    }
-    line_idle(t->tx_pin);
-    tmc_delay_ns(TMC_BIT_NS * 4);
-
-    if (!rx_wait_start(t->rx_pin, 2000, &edge_us)) {
-        restore_interrupts(ints);
-        return 0;
-    }
-    buf[0] = rx_byte_from_edge(t->rx_pin, edge_us);
-
-    int n = 1;
-    for (; n < 8; n++) {
-        if (!rx_wait_start(t->rx_pin, 200, &edge_us)) break;
-        buf[n] = rx_byte_from_edge(t->rx_pin, edge_us);
-    }
-    restore_interrupts(ints);
-    return n;
-}
-
-bool tmc_probe_rx(tmc_t *t, bool *tx_low_out, bool *rx_low_out) {
-    uint8_t req[4];
-    req[0] = 0x05;
-    req[1] = t->addr;
-    req[2] = TMC_REG_GSTAT & 0x7Fu;
-    req[3] = tmc_crc8(req, 3);
-
-    uint32_t ints = save_and_disable_interrupts();
-    for (int i = 0; i < 4; i++) {
-        tx_byte(t->tx_pin, req[i]);
-    }
-    gpio_set_dir(t->tx_pin, GPIO_IN);
-    gpio_pull_up(t->tx_pin);
-    gpio_set_dir(t->rx_pin, GPIO_IN);
-    gpio_pull_up(t->rx_pin);
-
-    bool tx_low = false, rx_low = false;
-    absolute_time_t end = make_timeout_time_us(2000);
-    while (!time_reached(end)) {
-        if (!gpio_get(t->tx_pin)) tx_low = true;
-        if (!gpio_get(t->rx_pin)) rx_low = true;
-    }
-    restore_interrupts(ints);
-
-    *tx_low_out = tx_low;
-    *rx_low_out = rx_low;
-    return true;
-}
-
 bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
     t->tx_pin = tx_pin;
     t->rx_pin = rx_pin;
