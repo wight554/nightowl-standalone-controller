@@ -245,8 +245,8 @@ else
     RP2_DEV=""
     for i in {1..20}; do
         # Look for a small USB block device (RP2040 boot is typically ~128M).
-        # Check for /dev/sdb1, /dev/sdc1, etc. (not sda, which is usually the main storage).
-        for dev in /dev/sd{b,c,d,e,f}1; do
+        # Check for /dev/sda1, /dev/sdb1, /dev/sdc1, etc.
+        for dev in /dev/sd{a,b,c,d,e,f}1; do
             if [[ -b "$dev" ]]; then
                 # Verify it's a small device (likely the RP2040).
                 size=$(lsblk -bn -o SIZE "$dev" 2>/dev/null || echo "0")
