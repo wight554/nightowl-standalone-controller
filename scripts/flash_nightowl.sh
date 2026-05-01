@@ -240,26 +240,35 @@ else
         exit 1
     fi
 
-    # Try to find existing mount or locate the device.
-    RP2_MOUNT="$(find_and_mount_rp2 || true)"
-    if [[ -z "$RP2_MOUNT" ]]; then
-        # Device not already mounted, find it and mount with sudo.
-        RP2_DEV="$(find_rp2_device || true)"
-        if [[ -z "$RP2_DEV" ]]; then
-            echo "Error: Could not find RPI-RP2 device."
-            echo "Ensure the board is in BOOT mode and connected, then rerun this script."
-            exit 1
+    # Wait for RPI-RP2 device to appear after BOOTSEL trigger.
+    echo "=== Waiting for RPI-RP2 device ==="
+    RP2_DEV=""
+    for i in {1..15}; do
+        if lsblk 2>/dev/null | grep -q "sda"; then
+            RP2_DEV="/dev/sda1"
+            echo "Found device after ${i}s"
+            break
         fi
+        if [[ $i -lt 15 ]]; then
+            echo "Waiting... ${i}s"
+            sleep 1
+        fi
+    done
 
-        RP2_MOUNT="/mnt/RPI-RP2"
-        echo "Found device: $RP2_DEV"
-        echo "Mounting $RP2_DEV to $RP2_MOUNT..."
-        sudo mkdir -p "$RP2_MOUNT"
-        sudo mount "$RP2_DEV" "$RP2_MOUNT" || {
-            echo "Error: Failed to mount $RP2_DEV"
-            exit 1
-        }
+    if [[ -z "$RP2_DEV" ]]; then
+        echo "Error: Could not find RPI-RP2 device."
+        echo "Ensure the board is in BOOT mode and connected, then rerun this script."
+        exit 1
     fi
+
+    # Mount, copy, and unmount.
+    RP2_MOUNT="/mnt/RPI-RP2"
+    echo "=== Mounting and flashing ==="
+    sudo mkdir -p "$RP2_MOUNT"
+    sudo mount "$RP2_DEV" "$RP2_MOUNT" || {
+        echo "Error: Failed to mount $RP2_DEV"
+        exit 1
+    }
 
     echo "Copying UF2 to $RP2_MOUNT..."
     sudo cp "$UF2_PATH" "$RP2_MOUNT/" || {
@@ -271,27 +280,31 @@ else
     sync
     echo "Unmounting $RP2_MOUNT..."
     sudo umount "$RP2_MOUNT" || {
-        echo "Warning: Failed to unmount $RP2_MOUNT (device may still be mounted)"
+        echo "Warning: Failed to unmount $RP2_MOUNT"
     }
+
+    # Wait for USB serial to re-enumerate after unmount.
+    echo "=== Waiting for USB serial ==="
+    SERIAL_PORT=""
+    for i in {1..15}; do
+        SERIAL_PORT="$(find_serial_port || true)"
+        if [[ -n "$SERIAL_PORT" ]]; then
+            echo "Serial up after ${i}s"
+            break
+        fi
+        if [[ $i -lt 15 ]]; then
+            echo "Waiting... ${i}s"
+            sleep 1
+        fi
+    done
 fi
 
 echo "=== Verify ==="
-echo "Waiting for device to re-enumerate..."
-SERIAL_PORT=""
-for attempt in {1..15}; do
-    SERIAL_PORT="$(find_serial_port || true)"
-    if [[ -n "$SERIAL_PORT" ]]; then
-        break
-    fi
-    if [[ $attempt -lt 15 ]]; then
-        sleep 0.5
-    fi
-done
-
+SERIAL_PORT="$(find_serial_port || true)"
 if [[ -n "$SERIAL_PORT" ]]; then
     verify_fw_version "$SERIAL_PORT"
 else
-    echo "Serial port not detected after flash; skipping VR check."
+    echo "Serial port not detected; skipping VR check."
 fi
 
 echo "=== Done ==="
