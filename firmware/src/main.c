@@ -189,7 +189,7 @@ static inline void din_update(din_t *d) {
 }
 
 static inline bool on_al(const din_t *d) {
-    return d->stable == 0;
+    return d->stable != 0;
 }
 
 // ===================== Stepper PWM =====================
