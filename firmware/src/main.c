@@ -56,49 +56,49 @@ static int FEED_SPS = CONF_FEED_SPS;
 static int REV_SPS = CONF_REV_SPS;
 static int AUTO_SPS = CONF_AUTO_SPS;
 
-static int MOTION_STARTUP_MS = 10000;
+static int MOTION_STARTUP_MS = CONF_MOTION_STARTUP_MS;
 
-static int LOW_DELAY_MS = 400;
-static int SWAP_COOLDOWN_MS = 500;
-static int RUNOUT_COOLDOWN_MS = 12000;
-static bool REQUIRE_Y_EMPTY_SWAP = true;
+static int LOW_DELAY_MS = CONF_LOW_DELAY_MS;
+static int SWAP_COOLDOWN_MS = CONF_SWAP_COOLDOWN_MS;
+static int RUNOUT_COOLDOWN_MS = CONF_RUNOUT_COOLDOWN_MS;
+static bool REQUIRE_Y_EMPTY_SWAP = CONF_REQUIRE_Y_EMPTY_SWAP;
 
-static int RAMP_STEP_SPS = 200;
-static int RAMP_TICK_MS = 5;
+static int RAMP_STEP_SPS = CONF_RAMP_STEP_SPS;
+static int RAMP_TICK_MS = CONF_RAMP_TICK_MS;
 
-static int TMC_RUN_CURRENT_MA[2] = {850, 850};
-static int TMC_HOLD_CURRENT_MA[2] = {300, 300};
+static int TMC_RUN_CURRENT_MA[2] = {CONF_RUN_CURRENT_MA, CONF_RUN_CURRENT_MA};
+static int TMC_HOLD_CURRENT_MA[2] = {CONF_HOLD_CURRENT_MA, CONF_HOLD_CURRENT_MA};
 static int TMC_MICROSTEPS = CONF_MICROSTEPS;
-static bool TMC_SPREADCYCLE = true;
-static int TMC_SGT_L1 = 80;
-static int TMC_SGT_L2 = 80;
-static int TMC_TCOOLTHRS = 400;
+static bool TMC_SPREADCYCLE = CONF_SPREADCYCLE;
+static int TMC_SGT_L1 = CONF_SGT_L1;
+static int TMC_SGT_L2 = CONF_SGT_L2;
+static int TMC_TCOOLTHRS = CONF_TCOOLTHRS;
 
-static int SERVO_OPEN_US = 500;
-static int SERVO_CLOSE_US = 1400;
-static int SERVO_BLOCK_US = 950;
-static int SERVO_SETTLE_MS = 500;
-static int CUT_FEED_MM = 48;
-static int CUT_LENGTH_MM = 10;
-static int CUT_AMOUNT = 1;
+static int SERVO_OPEN_US = CONF_SERVO_OPEN_US;
+static int SERVO_CLOSE_US = CONF_SERVO_CLOSE_US;
+static int SERVO_BLOCK_US = CONF_SERVO_BLOCK_US;
+static int SERVO_SETTLE_MS = CONF_SERVO_SETTLE_MS;
+static int CUT_FEED_MM = CONF_CUT_FEED_MM;
+static int CUT_LENGTH_MM = CONF_CUT_LENGTH_MM;
+static int CUT_AMOUNT = CONF_CUT_AMOUNT;
 static int CUT_TIMEOUT_SETTLE_MS = 1500;
 static int CUT_TIMEOUT_FEED_MS = 5000;
 
-static int TC_TIMEOUT_CUT_MS = 5000;
-static int TC_TIMEOUT_UNLOAD_MS = 8000;
-static int TC_TIMEOUT_TH_MS = 3000;
-static int TC_TIMEOUT_LOAD_MS = 15000;
+static int TC_TIMEOUT_CUT_MS = CONF_TC_TIMEOUT_CUT_MS;
+static int TC_TIMEOUT_UNLOAD_MS = CONF_TC_TIMEOUT_UNLOAD_MS;
+static int TC_TIMEOUT_TH_MS = CONF_TC_TIMEOUT_TH_MS;
+static int TC_TIMEOUT_LOAD_MS = CONF_TC_TIMEOUT_LOAD_MS;
 
-static int SYNC_MAX_SPS = 8000;
-static int SYNC_MIN_SPS = 0;
-static int SYNC_RAMP_UP_SPS = 300;
-static int SYNC_RAMP_DN_SPS = 150;
-static int SYNC_TICK_MS = 20;
-static int PRE_RAMP_SPS = 400;
-static int BUF_HYST_MS = 30;
-static int BUF_PREDICT_THR_MS = 250;
-static float BUF_HALF_TRAVEL_MM = 5.0f;
-static float SYNC_RATIO = 1.0f;
+static int SYNC_MAX_SPS = CONF_SYNC_MAX_SPS;
+static int SYNC_MIN_SPS = CONF_SYNC_MIN_SPS;
+static int SYNC_RAMP_UP_SPS = CONF_SYNC_RAMP_UP_SPS;
+static int SYNC_RAMP_DN_SPS = CONF_SYNC_RAMP_DN_SPS;
+static int SYNC_TICK_MS = CONF_SYNC_TICK_MS;
+static int PRE_RAMP_SPS = CONF_PRE_RAMP_SPS;
+static int BUF_HYST_MS = CONF_BUF_HYST_MS;
+static int BUF_PREDICT_THR_MS = CONF_BUF_PREDICT_THR_MS;
+static float BUF_HALF_TRAVEL_MM = CONF_BUF_HALF_TRAVEL_MM;
+static float SYNC_RATIO = CONF_SYNC_RATIO;
 static bool BUF_INVERT = false;
 
 static float MM_PER_STEP = CONF_MM_PER_STEP; // TUNE: gear + microstep derived.
@@ -386,7 +386,7 @@ static bool toolhead_has_filament = false;
 static bool sync_enabled = false;
 static int sync_current_sps = 0;
 static int g_baseline_sps = 3000;
-static float g_baseline_alpha = 0.15f;
+static float g_baseline_alpha = CONF_BASELINE_ALPHA;
 
 static buf_tracker_t g_buf = { .state = BUF_MID };
 static zone_event_t g_history[HISTORY_LEN] = {0};
