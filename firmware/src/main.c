@@ -1473,10 +1473,14 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             cmd_reply("ER", "ARG");
         } else {
             tmc_t *t = (ln == 1) ? &g_tmc1 : &g_tmc2;
+            // Baseline: read pins before sending anything (distinguishes DIAG-stuck-LOW from UART response)
+            bool tx_base = !gpio_get(t->tx_pin);
+            bool rx_base = !gpio_get(t->rx_pin);
             bool tx_low = false, rx_low = false;
             tmc_probe_rx(t, &tx_low, &rx_low);
-            char out[40];
-            snprintf(out, sizeof(out), "%d:TX=%d,RX=%d", ln, tx_low ? 1 : 0, rx_low ? 1 : 0);
+            char out[60];
+            snprintf(out, sizeof(out), "%d:BASE_TX=%d,BASE_RX=%d,TX=%d,RX=%d",
+                     ln, tx_base ? 1 : 0, rx_base ? 1 : 0, tx_low ? 1 : 0, rx_low ? 1 : 0);
             cmd_reply("OK", out);
         }
     } else if (!strcmp(cmd, "RR")) {

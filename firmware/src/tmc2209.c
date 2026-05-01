@@ -127,24 +127,23 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
     for (int i = 0; i < 4; i++) {
         tx_byte(t->tx_pin, req[i]);
     }
-    // ERB wires tx_pin to PDN_UART (single-wire half-duplex); after TX release the pin
-    // and listen on the same wire — the TMC drives it LOW for its response.
-    // rx_pin is DIAG only (normally LOW = no stall) and cannot be used for UART reads.
+    // ERB is two-wire: tx_pin drives PDN_UART, rx_pin receives the TMC response.
+    // After TX, release tx_pin (idle-high) and listen on rx_pin.
     line_idle(t->tx_pin);
     tmc_delay_ns(TMC_BIT_NS * 4); // TMC replies after 8 bit-times; poll before that window
 
-    if (!rx_wait_start(t->tx_pin, 2000, &edge_us)) {
+    if (!rx_wait_start(t->rx_pin, 2000, &edge_us)) {
         restore_interrupts(ints);
         return false;
     }
-    rep[0] = rx_byte_from_edge(t->tx_pin, edge_us);
+    rep[0] = rx_byte_from_edge(t->rx_pin, edge_us);
 
     for (int i = 1; i < 8; i++) {
-        if (!rx_wait_start(t->tx_pin, 200, &edge_us)) {
+        if (!rx_wait_start(t->rx_pin, 200, &edge_us)) {
             restore_interrupts(ints);
             return false;
         }
-        rep[i] = rx_byte_from_edge(t->tx_pin, edge_us);
+        rep[i] = rx_byte_from_edge(t->rx_pin, edge_us);
     }
     restore_interrupts(ints);
 
@@ -269,16 +268,16 @@ int tmc_read_raw(tmc_t *t, uint8_t reg, uint8_t buf[8]) {
     line_idle(t->tx_pin);
     tmc_delay_ns(TMC_BIT_NS * 4);
 
-    if (!rx_wait_start(t->tx_pin, 2000, &edge_us)) {
+    if (!rx_wait_start(t->rx_pin, 2000, &edge_us)) {
         restore_interrupts(ints);
         return 0;
     }
-    buf[0] = rx_byte_from_edge(t->tx_pin, edge_us);
+    buf[0] = rx_byte_from_edge(t->rx_pin, edge_us);
 
     int n = 1;
     for (; n < 8; n++) {
-        if (!rx_wait_start(t->tx_pin, 200, &edge_us)) break;
-        buf[n] = rx_byte_from_edge(t->tx_pin, edge_us);
+        if (!rx_wait_start(t->rx_pin, 200, &edge_us)) break;
+        buf[n] = rx_byte_from_edge(t->rx_pin, edge_us);
     }
     restore_interrupts(ints);
     return n;
@@ -306,7 +305,6 @@ bool tmc_probe_rx(tmc_t *t, bool *tx_low_out, bool *rx_low_out) {
         if (!gpio_get(t->tx_pin)) tx_low = true;
         if (!gpio_get(t->rx_pin)) rx_low = true;
     }
-    gpio_pull_down(t->rx_pin);
     restore_interrupts(ints);
 
     *tx_low_out = tx_low;
