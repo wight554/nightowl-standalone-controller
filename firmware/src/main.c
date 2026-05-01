@@ -101,6 +101,7 @@ static float BUF_HALF_TRAVEL_MM = CONF_BUF_HALF_TRAVEL_MM;
 static float SYNC_RATIO = CONF_SYNC_RATIO;
 static bool BUF_INVERT = false;
 static bool AUTO_PRELOAD = true;
+static int AUTOLOAD_RETRACT_MM = 10;
 
 static float MM_PER_STEP = CONF_MM_PER_STEP; // TUNE: gear + microstep derived.
 
@@ -288,6 +289,7 @@ typedef struct lane_s {
     motor_t m;
     task_t task;
     uint32_t autoload_deadline_ms;
+    uint32_t retract_deadline_ms;
 
     tmc_t *tmc;
     uint diag_pin;
@@ -450,11 +452,13 @@ static void lane_setup(lane_t *L, uint pin_in, uint pin_out, motor_t m, int lane
     L->fault = FAULT_NONE;
     L->lane_id = lane_id;
     L->runout_block_until_ms = 0;
+    L->retract_deadline_ms = 0;
 }
 
 static void lane_stop(lane_t *L) {
     L->task = TASK_IDLE;
     L->stall_armed = false;
+    L->retract_deadline_ms = 0;
     motor_stop(&L->m);
 }
 
@@ -463,6 +467,7 @@ static void lane_start(lane_t *L, task_t t, int sps, bool forward, uint32_t now_
     L->fault = FAULT_NONE;
     L->motion_started_ms = now_ms;
     L->stall_armed = false;
+    L->retract_deadline_ms = 0;
 
     if (t == TASK_AUTOLOAD) {
         L->autoload_deadline_ms = now_ms + (uint32_t)autoload_timeout_ms;
@@ -482,11 +487,26 @@ static void lane_tick(lane_t *L, uint32_t now_ms) {
 
     if (L->task == TASK_AUTOLOAD) {
         if (lane_out_present(L)) {
-            lane_stop(L);
-            if (active_lane != L->lane_id) {
-                set_active_lane(L->lane_id);
+            // Filament reached OUT: back off so tip parks between IN and OUT.
+            // Active lane is set at IN trigger (in autopreload_tick), not here.
+            if (AUTOLOAD_RETRACT_MM > 0) {
+                float secs = (float)AUTOLOAD_RETRACT_MM / ((float)REV_SPS * MM_PER_STEP);
+                if (secs < 0.05f) secs = 0.05f;
+                L->retract_deadline_ms = now_ms + (uint32_t)(secs * 1000.0f);
+                L->task = TASK_UNLOAD;
+                L->stall_armed = false;
+                motor_set_dir(&L->m, false);
+                motor_set_rate_sps(&L->m, REV_SPS);
+            } else {
+                lane_stop(L);
             }
         } else if ((int32_t)(now_ms - L->autoload_deadline_ms) >= 0) {
+            lane_stop(L);
+        }
+    }
+
+    if (L->task == TASK_UNLOAD && L->retract_deadline_ms != 0) {
+        if ((int32_t)(now_ms - L->retract_deadline_ms) >= 0) {
             lane_stop(L);
         }
     }
@@ -844,6 +864,11 @@ static void autopreload_tick(uint32_t now_ms) {
             sync_enabled = false;
             lane_start(&g_lane1, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
             cmd_event("PRELOAD", "1");
+            // Set active lane at insert time (matches Klipper insert_gcode logic).
+            // Only activate if the other lane's OUT is not present (other lane not loaded).
+            if (!lane_out_present(&g_lane2)) {
+                set_active_lane(1);
+            }
         }
     }
 
@@ -852,6 +877,10 @@ static void autopreload_tick(uint32_t now_ms) {
             sync_enabled = false;
             lane_start(&g_lane2, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
             cmd_event("PRELOAD", "2");
+            // Set active lane at insert time.
+            if (!lane_out_present(&g_lane1)) {
+                set_active_lane(2);
+            }
         }
     }
 
@@ -1086,7 +1115,7 @@ static void stall_pump(void) {
 // ===================== Settings persistence =====================
 #define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define SETTINGS_MAGIC 0x4E314F57u // 'N1OW' - NightOwl settings sentinel.
-#define SETTINGS_VERSION 3u
+#define SETTINGS_VERSION 4u
 
 typedef struct {
     uint32_t magic;
@@ -1102,6 +1131,7 @@ typedef struct {
     float baseline_alpha;
     bool buf_invert;
     bool auto_preload;
+    int autoload_retract_mm;
 
     int motion_startup_ms;
     int sgt_l1, sgt_l2;
@@ -1160,6 +1190,7 @@ static void settings_defaults(void) {
     g_baseline_alpha = CONF_BASELINE_ALPHA;
     BUF_INVERT = false;
     AUTO_PRELOAD = true;
+    AUTOLOAD_RETRACT_MM = 10;
 
     MOTION_STARTUP_MS = CONF_MOTION_STARTUP_MS;
     TMC_SGT_L1 = CONF_SGT_L1;
@@ -1219,6 +1250,7 @@ static void settings_save(void) {
     s.baseline_alpha = g_baseline_alpha;
     s.buf_invert = BUF_INVERT;
     s.auto_preload = AUTO_PRELOAD;
+    s.autoload_retract_mm = AUTOLOAD_RETRACT_MM;
 
     s.motion_startup_ms = MOTION_STARTUP_MS;
     s.sgt_l1 = TMC_SGT_L1;
@@ -1324,6 +1356,7 @@ static void settings_load(void) {
     g_baseline_alpha = s->baseline_alpha;
     BUF_INVERT = s->buf_invert;
     AUTO_PRELOAD = s->auto_preload;
+    AUTOLOAD_RETRACT_MM = s->autoload_retract_mm;
 
     MOTION_STARTUP_MS = s->motion_startup_ms;
     TMC_SGT_L1 = s->sgt_l1;
@@ -1593,8 +1626,9 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             else if (!strcmp(param, "PRE_RAMP"))     PRE_RAMP_SPS = clamp_i(iv, 0, 2000);
             else if (!strcmp(param, "BUF_TRAVEL"))   { BUF_HALF_TRAVEL_MM = fv < 1.0f ? 1.0f : fv > 50.0f ? 50.0f : fv; }
             else if (!strcmp(param, "BUF_HYST"))     BUF_HYST_MS = clamp_i(iv, 5, 500);
-            else if (!strcmp(param, "AUTO_PRELOAD")) AUTO_PRELOAD = (iv != 0);
-            else if (!strcmp(param, "BASELINE"))     g_baseline_sps = clamp_i(iv, 200, 30000);
+            else if (!strcmp(param, "AUTO_PRELOAD"))    AUTO_PRELOAD = (iv != 0);
+            else if (!strcmp(param, "RETRACT_MM"))       AUTOLOAD_RETRACT_MM = clamp_i(iv, 0, 50);
+            else if (!strcmp(param, "BASELINE"))         g_baseline_sps = clamp_i(iv, 200, 30000);
             else if (!strcmp(param, "STARTUP_MS"))   MOTION_STARTUP_MS = clamp_i(iv, 0, 30000);
             else if (!strcmp(param, "SERVO_OPEN"))   SERVO_OPEN_US = clamp_i(iv, 400, 2600);
             else if (!strcmp(param, "SERVO_CLOSE"))  SERVO_CLOSE_US = clamp_i(iv, 400, 2600);
@@ -1632,6 +1666,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         else if (!strcmp(param, "BUF_TRAVEL"))   snprintf(out, sizeof(out), "BUF_TRAVEL:%.3f", (double)BUF_HALF_TRAVEL_MM);
         else if (!strcmp(param, "BUF_HYST"))     snprintf(out, sizeof(out), "BUF_HYST:%d", BUF_HYST_MS);
         else if (!strcmp(param, "AUTO_PRELOAD")) snprintf(out, sizeof(out), "AUTO_PRELOAD:%d", AUTO_PRELOAD ? 1 : 0);
+        else if (!strcmp(param, "RETRACT_MM"))    snprintf(out, sizeof(out), "RETRACT_MM:%d", AUTOLOAD_RETRACT_MM);
         else if (!strcmp(param, "BASELINE"))     snprintf(out, sizeof(out), "BASELINE:%d", g_baseline_sps);
         else if (!strcmp(param, "STARTUP_MS"))   snprintf(out, sizeof(out), "STARTUP_MS:%d", MOTION_STARTUP_MS);
         else if (!strcmp(param, "SERVO_OPEN"))   snprintf(out, sizeof(out), "SERVO_OPEN:%d", SERVO_OPEN_US);
