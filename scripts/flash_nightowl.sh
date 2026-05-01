@@ -243,13 +243,22 @@ else
     # Wait for RPI-RP2 device to appear after BOOTSEL trigger.
     echo "=== Waiting for RPI-RP2 device ==="
     RP2_DEV=""
-    for i in {1..15}; do
-        if lsblk 2>/dev/null | grep -q "sda"; then
+    for i in {1..20}; do
+        # Try to detect the block device by checking if it's accessible.
+        if [[ -b "/dev/sda1" ]]; then
             RP2_DEV="/dev/sda1"
             echo "Found device after ${i}s"
             break
         fi
-        if [[ $i -lt 15 ]]; then
+        
+        # Also check lsblk output for 'sda' as a backup detection method.
+        if lsblk 2>/dev/null | grep -q "^sda"; then
+            RP2_DEV="/dev/sda1"
+            echo "Found device (via lsblk) after ${i}s"
+            break
+        fi
+        
+        if [[ $i -lt 20 ]]; then
             echo "Waiting... ${i}s"
             sleep 1
         fi
@@ -257,6 +266,11 @@ else
 
     if [[ -z "$RP2_DEV" ]]; then
         echo "Error: Could not find RPI-RP2 device."
+        echo "lsblk output:"
+        lsblk 2>/dev/null || echo "(lsblk unavailable)"
+        echo "Available block devices:"
+        ls -la /dev/sd* /dev/mmcblk* 2>/dev/null || echo "(none found)"
+        echo ""
         echo "Ensure the board is in BOOT mode and connected, then rerun this script."
         exit 1
     fi
