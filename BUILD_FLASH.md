@@ -1,67 +1,103 @@
-
 # Build and Flash Guide
 
-This firmware uses the Raspberry Pi Pico SDK.
+This repo targets RP2040 (ERB v2.0) using the Pico SDK.
 
----
+## Prerequisites
 
-# Requirements
+- `cmake`
+- `ninja`
+- `arm-none-eabi-gcc`
+- Pico SDK checkout
+- `picotool` (recommended)
+- Python 3 + `pyserial` (for helper scripts)
 
-Install:
+## 1) Prepare Config Header
 
-- cmake
-- ninja
-- gcc-arm-none-eabi
-- pico-sdk
-- picotool
+`config.ini` is the source of compile-time motor/TMC defaults.
 
----
+```bash
+cp config.ini.example config.ini   # first time only
+python3 scripts/gen_motor_config.py
+```
 
-# Build
+Generated file:
 
-Clean build:
+- `firmware/include/tune.h`
 
-cd ~/dev/nightowl-standalone-controller
-rm -rf build
-mkdir build
-cd build
+## 2) Configure and Build
 
-export PICO_SDK_PATH=~/dev/pico-sdk
+This repo uses `build_local/` for local builds.
 
-cmake -G Ninja ../firmware
-ninja
+```bash
+cmake -S firmware -B build_local -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk
+cmake --build build_local
+```
 
-Result:
+Outputs:
 
-build/nightowl_controller.elf
+- `build_local/nightowl_controller.elf`
+- `build_local/nightowl_controller.uf2`
 
----
+## 3) Flash (Recommended)
 
-# Flash
+Use the repo helper script:
 
-Using picotool:
+```bash
+bash scripts/flash_nightowl.sh
+```
 
-sudo ~/dev/picotool/build/picotool load build/nightowl_controller.elf -f
-sudo ~/dev/picotool/build/picotool reboot
+What it does:
 
----
+1. Builds firmware in `build_local/`
+2. Auto-detects serial port (if available)
+3. Sends `BOOT:` to reboot device into BOOTSEL
+4. Flashes with `picotool load ... -f`
+5. Attempts firmware version check via `VR:`
 
-# Full rebuild
+## 4) Flash Manually with picotool
 
-rm -rf build
-mkdir build
-cd build
-cmake -G Ninja ../firmware
-ninja
+```bash
+picotool load build_local/nightowl_controller.uf2 -f
+picotool reboot
+```
 
----
+If UF2 is not available:
 
-# Troubleshooting
+```bash
+picotool load build_local/nightowl_controller.elf -f
+picotool reboot
+```
 
-If cmake fails:
+## 5) Tuning and Validation Helpers
 
-verify PICO_SDK_PATH
+```bash
+python3 scripts/nightowl_test.py "VR:" "?:"
+python3 scripts/klipper_tune.py --lane 1 read
+python3 scripts/tmc_chopconf.py --lane 1 read
+```
 
-If flashing fails:
+All scripts support `--port`; if omitted they auto-detect serial ports.
 
-put Pico in BOOTSEL mode
+## Troubleshooting
+
+### CMake cannot find Pico SDK
+
+Set `-DPICO_SDK_PATH=/abs/path/to/pico-sdk` on first configure.
+
+### Flash script says picotool not found
+
+Install `picotool` or set environment variable:
+
+```bash
+PICOTOOL=/path/to/picotool bash scripts/flash_nightowl.sh
+```
+
+### Device does not show as serial after flash
+
+1. Replug USB cable.
+2. Ensure firmware built with USB stdio enabled.
+3. Run `python3 scripts/nightowl_test.py --port <port> "VR:"`.
+
+### BOOTSEL trigger fails
+
+Put the board in BOOTSEL mode manually, then re-run flashing step.

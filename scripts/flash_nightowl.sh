@@ -1,73 +1,128 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-PORT=/dev/ttyACM0
-MOUNT=/mnt/rp2
+BUILD_DIR="${BUILD_DIR:-$REPO/build_local}"
+UF2_PATH="$BUILD_DIR/nightowl_controller.uf2"
+ELF_PATH="$BUILD_DIR/nightowl_controller.elf"
 
-echo "=== Pulling latest ==="
-cd $REPO
-git pull
+find_picotool() {
+    if command -v picotool >/dev/null 2>&1; then
+        command -v picotool
+        return 0
+    fi
 
-echo "=== Building ==="
-mkdir -p build
-cd build
-cmake -G Ninja ../firmware -DPICO_SDK_PATH=~/dev/pico-sdk 2>&1 | tail -3
-ninja
+    local candidates=(
+        "$REPO/build_local/_deps/picotool/picotool"
+        "$REPO/build_local/picotool/picotool"
+        "$REPO/build_audit/_deps/picotool/picotool"
+    )
 
-echo "=== Triggering BOOTSEL via USB ==="
-if [ -e $PORT ]; then
-    python3 - << 'PYEOF'
-import serial, time
-s = serial.Serial('/dev/ttyACM0', 115200, timeout=2)
-time.sleep(0.5)
-s.write(b'BOOT:\n')
-time.sleep(0.3)
-try:
-    print(s.read(s.in_waiting).decode().strip())
-except OSError:
-    print("(port closed - reboot triggered)")
-s.close()
+    for c in "${candidates[@]}"; do
+        if [[ -x "$c" ]]; then
+            echo "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_serial_port() {
+    PYTHONPATH="$REPO/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PYEOF'
+from serial_utils import find_port
+port = find_port()
+print(port or "")
 PYEOF
+}
+
+send_bootsel() {
+    local port="$1"
+    PYTHONPATH="$REPO/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - <<PYEOF
+import serial
+import time
+
+port = ${port@Q}
+try:
+    s = serial.Serial(port, 115200, timeout=2)
+    time.sleep(0.3)
+    s.reset_input_buffer()
+    s.write(b"BOOT:\n")
+    time.sleep(0.3)
+    out = s.read(s.in_waiting).decode(errors="replace").strip()
+    if out:
+        print(out)
+    s.close()
+except Exception as e:
+    print(f"BOOTSEL trigger skipped ({e})")
+PYEOF
+}
+
+verify_fw_version() {
+    local port="$1"
+    PYTHONPATH="$REPO/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - <<PYEOF
+import serial
+import time
+
+port = ${port@Q}
+try:
+    s = serial.Serial(port, 115200, timeout=2)
+    time.sleep(0.3)
+    s.reset_input_buffer()
+    s.write(b"VR:\n")
+    time.sleep(0.3)
+    out = s.read(s.in_waiting).decode(errors="replace").strip()
+    print(out or "No VR response")
+    s.close()
+except Exception as e:
+    print(f"Unable to verify firmware version on {port}: {e}")
+PYEOF
+}
+
+echo "=== Build ==="
+mkdir -p "$BUILD_DIR"
+if [[ ! -f "$BUILD_DIR/build.ninja" ]]; then
+    echo "Configuring CMake in $BUILD_DIR"
+    cmake_args=( -S "$REPO/firmware" -B "$BUILD_DIR" -G Ninja )
+    if [[ -n "${PICO_SDK_PATH:-}" ]]; then
+        cmake_args+=( "-DPICO_SDK_PATH=$PICO_SDK_PATH" )
+    fi
+    cmake "${cmake_args[@]}"
+fi
+cmake --build "$BUILD_DIR"
+
+SERIAL_PORT="$(find_serial_port || true)"
+if [[ -n "$SERIAL_PORT" ]]; then
+    echo "=== Trigger BOOTSEL on $SERIAL_PORT ==="
+    send_bootsel "$SERIAL_PORT"
 else
-    echo "Port not found — assuming already in BOOTSEL"
+    echo "=== No serial port found; assuming device already in BOOTSEL ==="
 fi
 
-echo "=== Waiting for RPI-RP2 ==="
-for i in $(seq 1 15); do
-    sleep 1
-    if lsblk | grep -q sda; then
-        echo "Found after ${i}s"
-        break
-    fi
-    echo "Waiting... ${i}s"
-done
+echo "=== Flash ==="
+PICOTOOL_BIN="$(find_picotool || true)"
+if [[ -z "$PICOTOOL_BIN" ]]; then
+    echo "Error: picotool not found. Install picotool or set PICOTOOL=/path/to/picotool"
+    exit 1
+fi
 
-echo "=== Mounting and flashing ==="
-sudo mkdir -p $MOUNT
-sudo mount /dev/sda1 $MOUNT
-sudo cp $REPO/build/nightowl_controller.uf2 $MOUNT/
-sudo umount $MOUNT
+IMAGE_PATH="$UF2_PATH"
+if [[ ! -f "$IMAGE_PATH" ]]; then
+    IMAGE_PATH="$ELF_PATH"
+fi
+if [[ ! -f "$IMAGE_PATH" ]]; then
+    echo "Error: build output not found ($UF2_PATH or $ELF_PATH)"
+    exit 1
+fi
 
-echo "=== Waiting for USB serial ==="
-for i in $(seq 1 15); do
-    sleep 1
-    if [ -e $PORT ]; then
-        echo "Serial up after ${i}s"
-        break
-    fi
-    echo "Waiting... ${i}s"
-done
+"$PICOTOOL_BIN" load "$IMAGE_PATH" -f
+"$PICOTOOL_BIN" reboot || true
 
-echo "=== Verifying ==="
-python3 - << 'PYEOF'
-import serial, time
-s = serial.Serial('/dev/ttyACM0', 115200, timeout=2)
-time.sleep(0.5)
-s.write(b'VR:\n')
-time.sleep(0.3)
-print(s.read(s.in_waiting).decode().strip())
-s.close()
-PYEOF
+echo "=== Verify ==="
+SERIAL_PORT="$(find_serial_port || true)"
+if [[ -n "$SERIAL_PORT" ]]; then
+    verify_fw_version "$SERIAL_PORT"
+else
+    echo "Serial port not detected after flash; skipping VR check."
+fi
 
 echo "=== Done ==="

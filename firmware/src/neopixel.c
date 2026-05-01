@@ -34,7 +34,7 @@ static void ws2812_program_init_local(PIO pio,
 }
 
 void neopixel_init(uint pin) {
-    uint offset = pio_add_program(g_pio, &ws2812_program);
+    uint offset = (uint)pio_add_program(g_pio, &ws2812_program);
     ws2812_program_init_local(g_pio, g_sm, offset, pin, 800000.0f, false);
     neopixel_set(0, 0, 0);
 }

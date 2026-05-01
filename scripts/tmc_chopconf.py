@@ -2,13 +2,8 @@ import argparse
 import serial
 import time
 import sys
-import glob
 
-def find_port():
-    ports = glob.glob('/dev/ttyACM*') + glob.glob('/dev/cu.usbmodem*')
-    if not ports:
-        return None
-    return ports[0]
+from serial_utils import find_port
 
 def send_cmd(s, cmd):
     s.write((cmd + '\n').encode())
@@ -70,7 +65,7 @@ def main():
     subparsers = parser.add_subparsers(dest="action", required=True)
     
     # Read command
-    read_parser = subparsers.add_parser("read", help="Read CHOPCONF from the lane")
+    subparsers.add_parser("read", help="Read CHOPCONF from the lane")
     
     # Write command
     write_parser = subparsers.add_parser("write", help="Write CHOPCONF to the lane")

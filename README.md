@@ -1,263 +1,91 @@
-
 # NightOwl Standalone Controller
 
-Standalone dual-lane filament controller for automatic filament switching.
+NightOwl is a standalone dual-lane filament controller for ERB v2.0 (RP2040).
+It can run without a host plugin and handles lane switching, buffer-driven feed,
+and TMC2209 register/config tuning over USB serial.
 
-This firmware runs on the **ERB v2.0 controller (RP2040 based)** and manages:
+## What Is In This Repo
 
-- Dual filament drive motors
-- Automatic lane switching
-- Buffer monitoring
-- Filament motion detection
-- Runout signalling
-- OLED status display
-- Rotary encoder user interface
-- Manual feed / reverse control
+- `firmware/`: RP2040 firmware (C, Pico SDK)
+- `scripts/`: build/config/flash/tuning helpers
+- `config.ini`: user tuning source for motor and TMC defaults
+- `config.ini.example`: template for new setups
 
-The system allows a printer to **continue printing when a filament spool runs out** by automatically switching to a second filament lane.
+## Quick Start
 
----
+1. Copy and edit config:
 
-# Hardware Platform
+```bash
+cp config.ini.example config.ini
+```
 
-Controller board:
+2. Generate compile-time tuning header from `config.ini`:
 
-**ERB v2.0 (RP2040 based)**
+```bash
+python3 scripts/gen_motor_config.py
+```
 
-The ERB v2.0 provides:
+3. Build firmware:
 
-- RP2040 microcontroller
-- motor driver interface
-- digital sensor inputs
-- I2C interface for display
-- runout output signal
-- GPIO expansion
+```bash
+cmake -S firmware -B build_local -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk
+cmake --build build_local
+```
 
-The firmware is written specifically for this board.
+4. Flash firmware (auto-detect serial, trigger BOOTSEL when possible):
 
----
+```bash
+bash scripts/flash_nightowl.sh
+```
 
-# System Overview
+## Configuration Model
 
-The controller manages two filament lanes and feeds filament into a single output path.
+`config.ini` is the source of compile-time motor/TMC defaults.
+`scripts/gen_motor_config.py` generates `firmware/include/tune.h`.
 
-Lane 1 ----\
-            >---- Y splitter ----> Printer
-Lane 2 ----/
+Mandatory keys:
 
-Each lane contains:
+- `microsteps`
+- `rotation_distance`
+- `run_current`
 
-Filament spool
-     │
-IN sensor
-     │
-Drive motor
-     │
-OUT sensor
+Typical workflow:
 
-The system also monitors:
+```bash
+python3 scripts/gen_motor_config.py
+cmake --build build_local
+```
 
-Buffer LOW sensor  
-Buffer HIGH sensor  
-Y splitter sensor  
-Filament motion sensor
+Runtime changes (serial protocol `SET:/GET:/TW:/TR:`) can be saved to flash via `SV:`.
 
----
+## Tuning Scripts
 
-# Main Features
+- `scripts/klipper_tune.py`: apply/read Klipper-style parameters
+- `scripts/tmc_chopconf.py`: direct CHOPCONF read/write utility
+- `scripts/nightowl_test.py`: send arbitrary serial commands quickly
 
-### Automatic filament switching
+All scripts support `--port`; if omitted they auto-detect from available serial devices.
 
-When the active lane runs out:
+Examples:
 
-1. The system detects empty filament input
-2. Swap is armed
-3. Controller waits until the **Y splitter becomes empty**
-4. The second lane starts feeding
+```bash
+python3 scripts/klipper_tune.py --lane 1 read
+python3 scripts/klipper_tune.py --lane 2 apply config.ini
+python3 scripts/tmc_chopconf.py --lane 1 read
+python3 scripts/nightowl_test.py "VR:" "?:"
+```
 
-This prevents filament collisions inside the Y splitter.
+## Build Notes
 
----
+- Build output directory used in this repo is `build_local/`.
+- Flash script uses `picotool` if available in PATH, otherwise checks local build outputs.
+- For detailed flash/build troubleshooting, see `BUILD_FLASH.md`.
 
-### Buffer controlled feeding
+## Hardware and Operation Docs
 
-Buffer LOW  → start feeding  
-Buffer HIGH → stop feeding  
-
-This keeps filament tension stable.
-
----
-
-### Motion monitoring
-
-If motors run but filament does not move:
-
-- motion fault triggers
-- runout output activates
-
-A startup delay prevents false alarms during loading.
-
----
-
-### Live feed speed adjustment
-
-Feed speed can be adjusted directly from the home screen using the encoder.
-
----
-
-### Manual control mode
-
-Manual mode allows direct motor control.
-
-Manual menu:
-
-- Lane select (L1 / L2)
-- Feed or reverse
-- Run / Stop
-
-While running:
-
-Encoder rotate → change speed  
-Back button → stop motor
-
----
-
-# Display Interface
-
-Example screen:
-
-A:L1  L1:Y/Y L2:Y/-
-Buf L:Y H:-  Y:Y
-State:AUTO  Feed:5000
-Mot:OK
-
-Meaning:
-
-A:L1      Active lane  
-L1:Y/Y    Lane 1 IN and OUT sensors active  
-L2:Y/-    Lane 2 IN active, OUT empty  
-Buf L:Y   Buffer low triggered  
-Buf H:-   Buffer high not triggered  
-Y:Y       Filament present at Y splitter  
-
----
-
-# Safety Logic
-
-The controller stops feeding when:
-
-- no filament detected on both lanes
-- filament motion stops while motors run
-
-Runout signal is provided on **GPIO18**.
-
----
-
-# Pinout (ERB v2)
-
-Lane sensors
-
-Lane 1 IN   GPIO24  
-Lane 1 OUT  GPIO25  
-
-Lane 2 IN   GPIO22  
-Lane 2 OUT  GPIO12  
-
-Buffer
-
-Buffer LOW   GPIO6  
-Buffer HIGH  GPIO7  
-
-Y splitter
-
-Y sensor GPIO2
-
-Motion sensor
-
-Motion GPIO5
-
-Runout output
-
-Runout GPIO18
-
----
-
-# Motor Drivers
-
-Motor 1
-
-EN   GPIO8  
-DIR  GPIO9  
-STEP GPIO10  
-
-Motor 2
-
-EN   GPIO14  
-DIR  GPIO15  
-STEP GPIO16  
-
----
-
-# Display
-
-OLED controller: **SH1106**
-
-I2C Address: **0x3C**
-
-SDA GPIO26  
-SCL GPIO27  
-
----
-
-# Encoder
-
-A GPIO28  
-B GPIO4  
-
-Buttons
-
-Back    GPIO3  
-Confirm GPIO29  
-
----
-
-# Build
-
-Requirements:
-
-- pico-sdk
-- cmake
-- ninja
-- gcc-arm-none-eabi
-- picotool
-
-Build:
-
-cd ~/dev/nightowl-standalone-controller
-rm -rf build
-mkdir build
-cd build
-
-export PICO_SDK_PATH=~/dev/pico-sdk
-
-cmake -G Ninja ../firmware
-ninja
-
----
-
-# Flash
-
-sudo ~/dev/picotool/build/picotool load build/nightowl_controller.elf -f
-sudo ~/dev/picotool/build/picotool reboot
-
----
-
-# Documentation
-
-MANUAL.md  
-HARDWARE.md  
-BUILD_FLASH.md  
-WORKFLOW.md  
+- `HARDWARE.md`: board wiring and hardware assumptions
+- `MANUAL.md`: runtime behavior and operator guidance
+- `WORKFLOW.md`: Git branching and release discipline
 
 ---
 

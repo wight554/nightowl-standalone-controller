@@ -1,7 +1,7 @@
-# NightOwl config — copy this file to config.ini and fill in your values.
+# NightOwl config - copy this file to config.ini and fill in your values.
 # Section headers are optional and ignored; all keys are read regardless of section.
 # After editing run: python3 scripts/gen_motor_config.py
-# This regenerates firmware/include/motor_config.h which is compiled into the firmware.
+# This regenerates firmware/include/tune.h which is compiled into the firmware.
 
 # --- Required ---
 microsteps:

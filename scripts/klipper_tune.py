@@ -1,16 +1,11 @@
 import argparse
 import configparser
-import glob
 import math
 import serial
 import sys
 import time
 
-def find_port():
-    ports = glob.glob('/dev/ttyACM*') + glob.glob('/dev/cu.usbmodem*')
-    if not ports:
-        return None
-    return ports[0]
+from serial_utils import find_port
 
 def send_cmd(s, cmd):
     s.write((cmd + '\n').encode())
