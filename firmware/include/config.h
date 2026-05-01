@@ -24,8 +24,8 @@
 // (G36HSY4405-6D-80, 12V, 0.8A RMS)
 #define CONF_TOFF               3       // Off time (1-15)
 #define CONF_TBL                1       // Blank time (0=16, 1=24, 2=36, 3=54)
-#define CONF_HSTRT              8       // Hysteresis start (1 to 8)
-#define CONF_HEND               7       // Hysteresis end (-3 to 12)
+#define CONF_HSTRT              7       // Hysteresis start (0 to 7)
+#define CONF_HEND               10      // Hysteresis end (0 to 15)
 #define CONF_INTPOL             false   // Microstep interpolation
 
 // ----- Microsteps -----

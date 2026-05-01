@@ -40,8 +40,8 @@ def get_current_reg(run_current, hold_current, rsense):
 
 def encode_chopconf(toff, hstrt, hend, tbl, vsense, mres, intpol):
     reg_toff = toff & 0x0F
-    reg_hstrt = (hstrt - 1) & 0x07
-    reg_hend = (hend + 3) & 0x0F
+    reg_hstrt = hstrt & 0x07
+    reg_hend = hend & 0x0F
     reg_tbl = tbl & 0x03
     reg_vsense = vsense & 0x01
     reg_mres = mres & 0x0F
@@ -66,8 +66,8 @@ def decode_chopconf(val):
     mres = (val >> 24) & 0x0F
     intpol = (val >> 28) & 0x01
 
-    hstrt_actual = hstrt_reg + 1
-    hend_actual = hend_reg - 3
+    hstrt_actual = hstrt_reg
+    hend_actual = hend_reg
     microsteps = 256 >> mres if mres <= 8 else 0
 
     return {

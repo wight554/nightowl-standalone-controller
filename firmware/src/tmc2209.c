@@ -221,8 +221,8 @@ bool tmc_setup_chopconf(tmc_t *t, int microsteps, int toff, int tbl, int hstrt, 
     // Convert actual spreadsheet values to register values
     uint32_t reg_toff = (uint32_t)(toff & 0x0F);
     uint32_t reg_tbl = (uint32_t)(tbl & 0x03);
-    uint32_t reg_hstrt = (uint32_t)((hstrt - 1) & 0x07);
-    uint32_t reg_hend = (uint32_t)((hend + 3) & 0x0F);
+    uint32_t reg_hstrt = (uint32_t)(hstrt & 0x07);
+    uint32_t reg_hend = (uint32_t)(hend & 0x0F);
 
     uint32_t chop = 0;
     // CHOPCONF register layout (TMC2209 datasheet):

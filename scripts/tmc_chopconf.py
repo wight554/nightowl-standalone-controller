@@ -25,8 +25,8 @@ def decode_chopconf(val):
     vsense = (val >> 17) & 0x01
     mres = (val >> 24) & 0x0F
 
-    hstrt_actual = hstrt_reg + 1
-    hend_actual = hend_reg - 3
+    hstrt_actual = hstrt_reg
+    hend_actual = hend_reg
     microsteps = 256 >> mres if mres <= 8 else 0
 
     return {
@@ -42,8 +42,8 @@ def decode_chopconf(val):
 def encode_chopconf(toff, hstrt, hend, tbl, vsense, mres):
     """Encodes actual spreadsheet values into a 32-bit CHOPCONF register value."""
     reg_toff = toff & 0x0F
-    reg_hstrt = (hstrt - 1) & 0x07
-    reg_hend = (hend + 3) & 0x0F
+    reg_hstrt = hstrt & 0x07
+    reg_hend = hend & 0x0F
     reg_tbl = tbl & 0x03
     reg_vsense = vsense & 0x01
     reg_mres = mres & 0x0F
@@ -58,8 +58,8 @@ def encode_chopconf(toff, hstrt, hend, tbl, vsense, mres):
     return val
 
 def format_chopconf(decoded):
-    return (f"TOFF={decoded['TOFF']}, HSTRT={decoded['HSTRT']} (1 to 8), "
-            f"HEND={decoded['HEND']} (-3 to 12), TBL={decoded['TBL']}, "
+    return (f"TOFF={decoded['TOFF']}, HSTRT={decoded['HSTRT']} (0 to 7), "
+            f"HEND={decoded['HEND']} (0 to 15), TBL={decoded['TBL']}, "
             f"VSENSE={decoded['VSENSE']}, MRES={decoded['MRES']} ({decoded['microsteps']} microsteps)")
 
 def main():
@@ -75,8 +75,8 @@ def main():
     # Write command
     write_parser = subparsers.add_parser("write", help="Write CHOPCONF to the lane")
     write_parser.add_argument("--toff", type=int, required=True, help="TOFF (1-15)")
-    write_parser.add_argument("--hstrt", type=int, required=True, help="HSTRT (1-8)")
-    write_parser.add_argument("--hend", type=int, required=True, help="HEND (-3 to 12)")
+    write_parser.add_argument("--hstrt", type=int, required=True, help="HSTRT (0-7)")
+    write_parser.add_argument("--hend", type=int, required=True, help="HEND (0-15)")
     write_parser.add_argument("--tbl", type=int, required=True, choices=[0, 1, 2, 3], help="TBL (0=16, 1=24, 2=36, 3=54)")
     write_parser.add_argument("--vsense", type=int, required=True, choices=[0, 1], help="VSENSE (0 or 1)")
     write_parser.add_argument("--mres", type=int, required=True, choices=range(0, 9), help="MRES (0=256 to 8=1)")
