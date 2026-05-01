@@ -232,7 +232,7 @@ fi
 
 if picotool_supports_load "$PICOTOOL_BIN"; then
     "$PICOTOOL_BIN" load "$IMAGE_PATH" -f
-    "$PICOTOOL_BIN" reboot || true
+    "$PICOTOOL_BIN" reboot
 else
     echo "Warning: picotool has no USB load support; falling back to UF2 mass-storage copy."
     if [[ ! -f "$UF2_PATH" ]]; then
@@ -294,7 +294,8 @@ else
     sync
     echo "Unmounting $RP2_MOUNT..."
     sudo umount "$RP2_MOUNT" || {
-        echo "Warning: Failed to unmount $RP2_MOUNT"
+        echo "Error: Failed to unmount $RP2_MOUNT"
+        exit 1
     }
 
     # Wait for USB serial to re-enumerate after unmount.
