@@ -1448,6 +1448,36 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         else handled = false;
         if (handled) cmd_reply("OK", out);
         else cmd_reply("ER", "GET:UNKNOWN_PARAM");
+    } else if (!strcmp(cmd, "TW")) {
+        // Usage: TW:<lane>:<reg>:<val> (val in decimal or hex)
+        int ln, reg;
+        uint32_t val;
+        if (sscanf(p, "%d:%d:%i", &ln, &reg, &val) == 3 && (ln == 1 || ln == 2) && reg >= 0 && reg <= 127) {
+            tmc_t *t = (ln == 1) ? &g_tmc1 : &g_tmc2;
+            if (tmc_write(t, (uint8_t)reg, val)) {
+                cmd_reply("OK", NULL);
+            } else {
+                cmd_reply("ER", "TW:FAILED");
+            }
+        } else {
+            cmd_reply("ER", "ARG");
+        }
+    } else if (!strcmp(cmd, "TR")) {
+        // Usage: TR:<lane>:<reg>
+        int ln, reg;
+        if (sscanf(p, "%d:%d", &ln, &reg) == 2 && (ln == 1 || ln == 2) && reg >= 0 && reg <= 127) {
+            tmc_t *t = (ln == 1) ? &g_tmc1 : &g_tmc2;
+            uint32_t val = 0;
+            if (tmc_read(t, (uint8_t)reg, &val)) {
+                char out[32];
+                snprintf(out, sizeof(out), "%d:%d:0x%08lX", ln, reg, val);
+                cmd_reply("OK", out);
+            } else {
+                cmd_reply("ER", "TR:NO_RESPONSE");
+            }
+        } else {
+            cmd_reply("ER", "ARG");
+        }
     } else if (!strcmp(cmd, "RR")) {
         // Raw read on tx_pin: N=0→no response, N=8→full frame. Scans addr 0-3.
         // Usage: RR:1 or RR:2
