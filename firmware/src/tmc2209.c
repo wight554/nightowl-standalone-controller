@@ -1,16 +1,11 @@
 #include "tmc2209.h"
-
 #include <math.h>
-
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
 
-// 40 kHz matches Klipper's tmcuart.c bit-bang rate; more resilient on
-// a shared single-wire trace than 115200 (TMC2209 auto-detects baud rate).
 #define TMC_BAUD    40000u
 #define TMC_BIT_NS  25000u
-// Half-bit period in nanoseconds, used for absolute RX sample offsets.
 #define TMC_HALF_BIT_NS 12500u
 
 static inline void tmc_delay_ns(uint32_t ns) {
@@ -18,6 +13,11 @@ static inline void tmc_delay_ns(uint32_t ns) {
 }
 
 static inline void line_idle(uint pin) {
+    gpio_put(pin, 1);
+    gpio_set_dir(pin, GPIO_OUT);
+}
+
+static inline void line_listen(uint pin) {
     gpio_set_dir(pin, GPIO_IN);
     gpio_pull_up(pin);
 }
@@ -27,17 +27,17 @@ static inline void line_drive_low(uint pin) {
     gpio_set_dir(pin, GPIO_OUT);
 }
 
-// ERB V2.0 has no external pull-up on PDN_UART; the TMC's internal PDN pull-down
-// overcomes the RP2040 weak pull-up (~50kΩ). Drive HIGH actively so '1' bits and
-// stop bits reach the required idle-high level on the wire.
 static inline void line_drive_high(uint pin) {
     gpio_put(pin, 1);
     gpio_set_dir(pin, GPIO_OUT);
 }
 
 static void tx_byte(uint pin, uint8_t b) {
+    uint64_t next_us = time_us_64();
+
     line_drive_low(pin);
-    tmc_delay_ns(TMC_BIT_NS);
+    next_us += 25;
+    busy_wait_until(from_us_since_boot(next_us));
 
     for (int i = 0; i < 8; i++) {
         if (b & 0x01) {
@@ -46,22 +46,28 @@ static void tx_byte(uint pin, uint8_t b) {
             line_drive_low(pin);
         }
         b >>= 1;
-        tmc_delay_ns(TMC_BIT_NS);
+        next_us += 25;
+        busy_wait_until(from_us_since_boot(next_us));
     }
 
-    line_drive_high(pin);  // stop bit — must be driven, not floated
-    tmc_delay_ns(TMC_BIT_NS);
+    line_drive_high(pin);
+    next_us += 25;
+    busy_wait_until(from_us_since_boot(next_us));
 }
 
-// Returns true and captures edge timestamp when start bit (LOW) detected within timeout.
-// Each 9µs rounded delay accumulates ~320ns/bit drift; capturing the edge time once
-// and computing absolute sample offsets below eliminates that cumulative error.
 static bool rx_wait_start(uint pin, uint32_t timeout_us, uint64_t *edge_us_out) {
     absolute_time_t deadline = make_timeout_time_us(timeout_us);
-    line_idle(pin);
+
+    // 1. Force wait for HIGH (guarantees we are in the stop bit / idle state)
+    while (!gpio_get(pin)) {
+        if (time_reached(deadline)) return false;
+    }
+
+    // 2. Now wait for the falling edge (the true start bit)
     while (gpio_get(pin)) {
         if (time_reached(deadline)) return false;
     }
+
     *edge_us_out = time_us_64();
     return true;
 }
@@ -131,12 +137,15 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
     for (int i = 0; i < 4; i++) {
         tx_byte(t->tx_pin, req[i]);
     }
+
+    line_listen(t->tx_pin);
     // Single-wire: tx_pin IS the UART wire. After TX, release to INPUT and listen
     // on the same pin for the TMC's reply (~8 bit-times after last TX bit).
-    line_idle(t->tx_pin);
-    tmc_delay_ns(TMC_BIT_NS * 4); // start polling before the 8-bit-time reply window
+    // Start polling before the 8-bit-time reply window (wait 4 bit-times).
+    busy_wait_us_32(100);
 
     if (!rx_wait_start(t->tx_pin, 2000, &edge_us)) {
+        line_idle(t->tx_pin);
         restore_interrupts(ints);
         return false;
     }
@@ -144,12 +153,15 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
 
     for (int i = 1; i < 8; i++) {
         if (!rx_wait_start(t->tx_pin, 200, &edge_us)) {
+            line_idle(t->tx_pin);
             restore_interrupts(ints);
             return false;
         }
         rep[i] = rx_byte_from_edge(t->tx_pin, edge_us);
     }
+    line_idle(t->tx_pin);
     restore_interrupts(ints);
+
 
     if (rep[0] != 0x05 || rep[1] != 0xFF || (rep[2] & 0x7Fu) != reg) {
         return false;
@@ -166,20 +178,17 @@ bool tmc_read(tmc_t *t, uint8_t reg, uint32_t *out) {
 }
 
 static uint8_t clamp_u5_from_ma(int ma) {
-    // TMC2209 current to CS — matches Klipper TMCCurrentHelper formula
-    // CS = 32 * Irms * (Rsense + 0.020) * sqrt(2) / Vsense_ref - 1
-    // Try VSENSE=0 (Vref=0.32V) first; if CS<16 switch to VSENSE=1 (Vref=0.18V)
-    // Caller must set VSENSE bit in CHOPCONF to match.
-    // For ERB Rsense=0.110: effective = 0.130
-    // At 800mA VSENSE=0: CS=13 (<16) → VSENSE=1: CS=25 ✓ matches spreadsheet
     if (ma <= 0) return 0;
     float irms   = (float)ma / 1000.0f;
+    // TMC2209 current to CS — matches Klipper TMCCurrentHelper formula
+    // CS = 32 * Irms * (Rsense + 0.020) * sqrt(2) / Vsense_ref - 1
+    // For ERB Rsense=0.110: effective = 0.130
     float reff   = 0.110f + 0.020f;          // Rsense + 20mΩ per TMC docs
     float sqrt2  = 1.41421356f;
-    // Try VSENSE=0 first
+    // Try VSENSE=0 (Vref=0.32V) first
     int v = (int)(32.0f * irms * reff * sqrt2 / 0.32f - 1.0f + 0.5f);
     if (v < 16) {
-        // Switch to VSENSE=1 for better CS resolution
+        // Switch to VSENSE=1 (Vref=0.18V) for better CS resolution
         v = (int)(32.0f * irms * reff * sqrt2 / 0.18f - 1.0f + 0.5f);
     }
     if (v < 0)  v = 0;
@@ -228,8 +237,6 @@ bool tmc_set_microsteps(tmc_t *t, int microsteps) {
 
 bool tmc_set_spreadcycle(tmc_t *t, bool spreadcycle) {
     uint32_t gconf = 0;
-    // Write GCONF without read — reads fail on ERB
-    // bit2=en_spreadcycle, bit6=pdn_disable, bit7=mstep_reg_select
     if (spreadcycle) gconf |= (1u << 2);
     gconf |= (1u << 6) | (1u << 7);
     return tmc_write(t, TMC_REG_GCONF, gconf);
@@ -252,10 +259,7 @@ bool tmc_read_sg_result(tmc_t *t, uint16_t *out) {
     return true;
 }
 
-
-// Sends a read request and captures raw bytes on tx_pin without validating.
-// Returns number of bytes received: 0=timeout (no response), 1-7=partial, 8=full frame.
-int tmc_read_raw(tmc_t *t, uint8_t reg, uint8_t buf[8]) {
+int tmc_read_raw(tmc_t *t, uint8_t reg, uint8_t *buf_out) {
     uint8_t req[4];
     uint64_t edge_us;
 
@@ -268,20 +272,26 @@ int tmc_read_raw(tmc_t *t, uint8_t reg, uint8_t buf[8]) {
     for (int i = 0; i < 4; i++) {
         tx_byte(t->tx_pin, req[i]);
     }
-    line_idle(t->tx_pin);
-    tmc_delay_ns(TMC_BIT_NS * 4);
+
+    line_listen(t->tx_pin);
+    // Single-wire: tx_pin IS the UART wire. After TX, release to INPUT and listen
+    // on the same pin for the TMC's reply (~8 bit-times after last TX bit).
+    // Start polling before the 8-bit-time reply window (wait 4 bit-times).
+    busy_wait_us_32(100);
 
     if (!rx_wait_start(t->tx_pin, 2000, &edge_us)) {
+        line_idle(t->tx_pin);
         restore_interrupts(ints);
         return 0;
     }
-    buf[0] = rx_byte_from_edge(t->tx_pin, edge_us);
+    buf_out[0] = rx_byte_from_edge(t->tx_pin, edge_us);
 
     int n = 1;
     for (; n < 8; n++) {
         if (!rx_wait_start(t->tx_pin, 200, &edge_us)) break;
-        buf[n] = rx_byte_from_edge(t->tx_pin, edge_us);
+        buf_out[n] = rx_byte_from_edge(t->tx_pin, edge_us);
     }
+    line_idle(t->tx_pin);
     restore_interrupts(ints);
     return n;
 }
@@ -290,15 +300,11 @@ bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
     t->tx_pin = tx_pin;
     t->rx_pin = rx_pin;
     t->addr = addr;
-    // Brief HIGH pulse (<1ms) to establish idle-high before first UART byte
-    // without triggering TMC standby (tST ≈ 1ms). The 10ms pulse used previously
-    // reliably triggered standby, making gpio11 HIGH via standby's PDN deactivation
-    // rather than via pdn_disable=1 — explaining why reads never saw a response.
+
     gpio_init(tx_pin);
-    gpio_put(tx_pin, 1);
-    gpio_set_dir(tx_pin, GPIO_OUT);
-    sleep_us(100);
     line_idle(tx_pin);
+    sleep_us(100);
+
     gpio_init(rx_pin);
     gpio_set_dir(rx_pin, GPIO_IN);
     gpio_pull_up(rx_pin);
