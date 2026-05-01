@@ -286,15 +286,15 @@ bool tmc_init(tmc_t *t, uint tx_pin, uint rx_pin, uint8_t addr) {
     t->tx_pin = tx_pin;
     t->rx_pin = rx_pin;
     t->addr = addr;
-    // Precondition: actively drive tx_pin HIGH for 10ms to overcome the TMC's
-    // internal PDN pull-down and establish idle-high before first UART byte.
+    // Brief HIGH pulse (<1ms) to establish idle-high before first UART byte
+    // without triggering TMC standby (tST ≈ 1ms). The 10ms pulse used previously
+    // reliably triggered standby, making gpio11 HIGH via standby's PDN deactivation
+    // rather than via pdn_disable=1 — explaining why reads never saw a response.
     gpio_init(tx_pin);
     gpio_put(tx_pin, 1);
     gpio_set_dir(tx_pin, GPIO_OUT);
-    sleep_ms(10);
-    line_idle(tx_pin);  // release to INPUT/PULL_UP; line stays HIGH once TMC
-                        // enables pdn_disable=1 (its own pull-up activates)
-    // rx_pin is DIAG (active-high stall); pull-up prevents floating during init.
+    sleep_us(100);
+    line_idle(tx_pin);
     gpio_init(rx_pin);
     gpio_set_dir(rx_pin, GPIO_IN);
     gpio_pull_up(rx_pin);
