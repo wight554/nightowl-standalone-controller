@@ -26,6 +26,7 @@
 #define CONF_TBL                1       // Blank time (0=16, 1=24, 2=36, 3=54)
 #define CONF_HSTRT              8       // Hysteresis start (1 to 8)
 #define CONF_HEND               7       // Hysteresis end (-3 to 12)
+#define CONF_INTPOL             false   // Microstep interpolation
 
 // ----- Microsteps -----
 // Hardware-fixed by MS1/MS2 on ERB (both pulled low = 8 microsteps)

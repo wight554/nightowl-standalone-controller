@@ -203,7 +203,7 @@ bool tmc_set_run_current_ma(tmc_t *t, int run_ma, int hold_ma) {
     return tmc_write(t, TMC_REG_IHOLD_IRUN, reg);
 }
 
-bool tmc_setup_chopconf(tmc_t *t, int microsteps, int toff, int tbl, int hstrt, int hend) {
+bool tmc_setup_chopconf(tmc_t *t, int microsteps, int toff, int tbl, int hstrt, int hend, bool intpol) {
     int mres;
     switch (microsteps) {
         case 256: mres = 0; break;
@@ -232,12 +232,16 @@ bool tmc_setup_chopconf(tmc_t *t, int microsteps, int toff, int tbl, int hstrt, 
     // bits[16:15] TBL
     // bit[17]     VSENSE=1
     // bits[27:24] MRES
+    // bit[28]     INTPOL
     chop |= (reg_toff  << 0);
     chop |= (reg_hstrt << 4);
     chop |= (reg_hend  << 7);
     chop |= (reg_tbl   << 15);
     chop |= (1u        << 17);   // VSENSE=1
     chop |= ((uint32_t)mres << 24); // MRES
+    if (intpol) {
+        chop |= (1u << 28);
+    }
     return tmc_write(t, TMC_REG_CHOPCONF, chop);
 }
 

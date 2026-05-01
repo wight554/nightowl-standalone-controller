@@ -1015,6 +1015,8 @@ typedef struct {
     bool require_y_empty_swap;
 
     int ramp_step_sps, ramp_tick_ms;
+    
+    float mm_per_step;
 
     uint32_t crc32;
 } settings_t;
@@ -1081,6 +1083,8 @@ static void settings_defaults(void) {
 
     RAMP_STEP_SPS = 200;
     RAMP_TICK_MS = 5;
+    
+    MM_PER_STEP = CONF_MM_PER_STEP;
 }
 
 static void settings_save(void) {
@@ -1135,6 +1139,8 @@ static void settings_save(void) {
 
     s.ramp_step_sps = RAMP_STEP_SPS;
     s.ramp_tick_ms = RAMP_TICK_MS;
+    
+    s.mm_per_step = MM_PER_STEP;
 
     s.crc32 = crc32_buf((const uint8_t *)&s, offsetof(settings_t, crc32));
 
@@ -1152,8 +1158,8 @@ static void settings_save(void) {
 static void tmc_apply_all(void) {
     tmc_set_spreadcycle(&g_tmc1, TMC_SPREADCYCLE);
     tmc_set_spreadcycle(&g_tmc2, TMC_SPREADCYCLE);
-    tmc_setup_chopconf(&g_tmc1, TMC_MICROSTEPS, CONF_TOFF, CONF_TBL, CONF_HSTRT, CONF_HEND);
-    tmc_setup_chopconf(&g_tmc2, TMC_MICROSTEPS, CONF_TOFF, CONF_TBL, CONF_HSTRT, CONF_HEND);
+    tmc_setup_chopconf(&g_tmc1, TMC_MICROSTEPS, CONF_TOFF, CONF_TBL, CONF_HSTRT, CONF_HEND, CONF_INTPOL);
+    tmc_setup_chopconf(&g_tmc2, TMC_MICROSTEPS, CONF_TOFF, CONF_TBL, CONF_HSTRT, CONF_HEND, CONF_INTPOL);
     tmc_set_run_current_ma(&g_tmc1, TMC_RUN_CURRENT_MA, TMC_HOLD_CURRENT_MA);
     tmc_set_run_current_ma(&g_tmc2, TMC_RUN_CURRENT_MA, TMC_HOLD_CURRENT_MA);
     tmc_set_tcoolthrs(&g_tmc1, (uint32_t)TMC_TCOOLTHRS);
@@ -1225,6 +1231,12 @@ static void settings_load(void) {
 
     RAMP_STEP_SPS = s->ramp_step_sps;
     RAMP_TICK_MS = s->ramp_tick_ms;
+
+    if (s->mm_per_step > 0.0001f) {
+        MM_PER_STEP = s->mm_per_step;
+    } else {
+        MM_PER_STEP = CONF_MM_PER_STEP;
+    }
 
     tmc_apply_all();
 }
@@ -1415,6 +1427,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             else if (!strcmp(param, "TC_UNLOAD_MS")) TC_TIMEOUT_UNLOAD_MS = clamp_i(iv, 1000, 30000);
             else if (!strcmp(param, "TC_TH_MS"))     TC_TIMEOUT_TH_MS = clamp_i(iv, 0, 10000);
             else if (!strcmp(param, "TC_LOAD_MS"))   TC_TIMEOUT_LOAD_MS = clamp_i(iv, 1000, 60000);
+            else if (!strcmp(param, "MM_PER_STEP"))  { MM_PER_STEP = fv < 0.001f ? 0.001f : fv > 10.0f ? 10.0f : fv; }
             else handled = false;
             if (handled) cmd_reply("OK", NULL);
             else cmd_reply("ER", "SET:UNKNOWN_PARAM");
@@ -1445,6 +1458,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         else if (!strcmp(p, "TC_UNLOAD_MS")) snprintf(out, sizeof(out), "TC_UNLOAD_MS:%d", TC_TIMEOUT_UNLOAD_MS);
         else if (!strcmp(p, "TC_TH_MS"))     snprintf(out, sizeof(out), "TC_TH_MS:%d", TC_TIMEOUT_TH_MS);
         else if (!strcmp(p, "TC_LOAD_MS"))   snprintf(out, sizeof(out), "TC_LOAD_MS:%d", TC_TIMEOUT_LOAD_MS);
+        else if (!strcmp(p, "MM_PER_STEP"))  snprintf(out, sizeof(out), "MM_PER_STEP:%.5f", (double)MM_PER_STEP);
         else handled = false;
         if (handled) cmd_reply("OK", out);
         else cmd_reply("ER", "GET:UNKNOWN_PARAM");
