@@ -1,0 +1,21 @@
+# NightOwl config — copy this file to config.ini and fill in your values.
+# Section headers are optional and ignored; all keys are read regardless of section.
+# After editing run: python3 scripts/gen_motor_config.py
+# This regenerates firmware/include/motor_config.h which is compiled into the firmware.
+
+# --- Required ---
+microsteps:
+rotation_distance:
+run_current:
+
+# --- Optional (Klipper defaults shown) ---
+# full_steps_per_rotation: 200
+# gear_ratio: 1:1
+# hold_current:                  # defaults to run_current / 2 if omitted
+# sense_resistor: 0.110
+# interpolate: True
+# driver_TBL: 2
+# driver_TOFF: 3
+# driver_HSTRT: 5
+# driver_HEND: 0
+# stealthchop_threshold: 0       # 0 = SpreadCycle always on (recommended for MMU)

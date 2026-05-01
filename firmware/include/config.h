@@ -6,39 +6,13 @@
 // Runtime tunables are available via SET:/GET: USB commands.
 // =====================================================================
 
-// ----- Motor current -----
-// Rated current of motor: 1A (G36HSY4405-6D-80)
-// Run at 80-85% of rated for thermal margin
-// NOTE: at 800mA with Rsense=0.110, firmware auto-selects VSENSE=1 (CS=25)
-// If you lower current below ~580mA, VSENSE=0 may be selected but CHOPCONF
-// still writes VSENSE=1 — update CONF_CHOPCONF_VSENSE if changing current significantly
-#define CONF_RUN_CURRENT_MA     800     // RMS mA
-#define CONF_HOLD_CURRENT_MA    300     // RMS mA (hold)
+// Motor parameters are generated from config.ini.
+// Run: python3 scripts/gen_motor_config.py
+#include "motor_config.h"
 
 // ----- Sense resistor -----
-// ERB V2.0 onboard Rsense (R46/R47, R48/R49)
+// ERB V2.0 onboard Rsense (R46/R47, R48/R49) — hardware constant, not user-tunable
 #define CONF_RSENSE_OHM         0.110f  // Ohms — confirmed from schematic
-
-// ----- CHOPCONF -----
-// Values from Trinamic spreadsheet calculator for this motor
-// (G36HSY4405-6D-80, 12V, 0.8A RMS)
-#define CONF_TOFF               3       // Off time (1-15)
-#define CONF_TBL                1       // Blank time (0=16, 1=24, 2=36, 3=54)
-#define CONF_HSTRT              7       // Hysteresis start (0 to 7)
-#define CONF_HEND               10      // Hysteresis end (0 to 15)
-#define CONF_INTPOL             false   // Microstep interpolation
-
-// ----- Microsteps -----
-// Hardware-fixed by MS1/MS2 on ERB (both pulled low = 8 microsteps)
-// UART write of MRES is ignored when MS1/MS2 set hardware mode
-// Set to match actual hardware microstep setting
-#define CONF_MICROSTEPS         8
-
-// ----- MM per step -----
-// Depends on drive gear fitted to motor shaft
-// Formula: (pi * gear_diameter_mm) / (200 * microsteps)
-// TUNE: measure empirically — command 100mm, measure actual movement
-#define CONF_MM_PER_STEP        0.0125f // TUNE: placeholder
 
 // ----- Speeds (steps per second) -----
 #define CONF_FEED_SPS           5000

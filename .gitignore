@@ -12,6 +12,12 @@ build_local/
 
 .claude/settings.local.json
 
+# personal motor config — copy config.ini.example to get started
+config.ini
+
+# generated from config.ini — run scripts/gen_motor_config.py to create
+firmware/include/motor_config.h
+
 # ninja/cmake junk
 .ninja_deps
 .ninja_log
