@@ -160,6 +160,28 @@ All values are applied immediately.
 
 ---
 
+# USB Runtime Toggles
+
+The controller supports runtime toggles over USB serial (`SET:/GET:`):
+
+- `SM` (`0/1`) - sync mode enable
+- `BI` (`0/1`) - buffer sensor invert
+- `AUTO_PRELOAD` (`0/1`) - auto-start preload on IN sensor rising edge
+
+Related runtime boolean state:
+
+- `TS:<0|1>` - host-reported toolhead filament presence
+
+Examples:
+
+```bash
+python3 scripts/nightowl_test.py "SET:AUTO_PRELOAD:1" "GET:AUTO_PRELOAD"
+python3 scripts/nightowl_test.py "SET:SM:1" "GET:SM"
+python3 scripts/nightowl_test.py "SET:BI:0" "GET:BI"
+```
+
+---
+
 # Encoder Controls
 
 Rotate:

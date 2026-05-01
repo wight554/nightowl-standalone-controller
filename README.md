@@ -58,6 +58,41 @@ cmake --build build_local
 
 Runtime changes (serial protocol `SET:/GET:/TW:/TR:`) can be saved to flash via `SV:`.
 
+## Serial Runtime Commands
+
+Core control:
+
+- `T:<lane>`: set active lane (`1` or `2`)
+- `LO:`: autoload active lane until output sensor or timeout
+- `UL:`: reverse/unload active lane
+- `TC:<lane>`: toolchange to target lane
+- `ST:`: stop motors and abort active operations
+- `?:` status snapshot (`I1/O1/I2/O2/YS`, tasks, sync state)
+
+Runtime toggles (`SET:/GET:`):
+
+- `SM` (`0/1`): sync mode enable
+- `BI` (`0/1`): buffer sensor invert
+- `AUTO_PRELOAD` (`0/1`): auto-start preload on IN sensor rising edge
+
+Other runtime boolean state:
+
+- `TS:<0|1>`: host-reported toolhead filament presence
+
+Examples:
+
+```bash
+python3 scripts/nightowl_test.py "SET:AUTO_PRELOAD:1" "GET:AUTO_PRELOAD"
+python3 scripts/nightowl_test.py "SET:SM:1" "GET:SM"
+python3 scripts/nightowl_test.py "SET:BI:0" "GET:BI"
+```
+
+Persist runtime values to flash:
+
+```bash
+python3 scripts/nightowl_test.py "SV:"
+```
+
 ## Tuning Scripts
 
 - `scripts/klipper_tune.py`: apply/read Klipper-style parameters

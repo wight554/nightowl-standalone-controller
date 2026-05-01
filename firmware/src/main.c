@@ -100,6 +100,7 @@ static int BUF_PREDICT_THR_MS = CONF_BUF_PREDICT_THR_MS;
 static float BUF_HALF_TRAVEL_MM = CONF_BUF_HALF_TRAVEL_MM;
 static float SYNC_RATIO = CONF_SYNC_RATIO;
 static bool BUF_INVERT = false;
+static bool AUTO_PRELOAD = true;
 
 static float MM_PER_STEP = CONF_MM_PER_STEP; // TUNE: gear + microstep derived.
 
@@ -397,6 +398,9 @@ static uint32_t sync_last_evt_ms = 0;
 
 static volatile bool stall_pending_l1 = false;
 static volatile bool stall_pending_l2 = false;
+
+static bool prev_lane1_in_present = false;
+static bool prev_lane2_in_present = false;
 
 // ===================== Forward declarations =====================
 static void cmd_event(const char *type, const char *data);
@@ -799,6 +803,36 @@ static void tc_tick(uint32_t now_ms) {
     }
 }
 
+static void autopreload_tick(uint32_t now_ms) {
+    if (!AUTO_PRELOAD) {
+        prev_lane1_in_present = lane_in_present(&g_lane1);
+        prev_lane2_in_present = lane_in_present(&g_lane2);
+        return;
+    }
+
+    bool in1 = lane_in_present(&g_lane1);
+    bool in2 = lane_in_present(&g_lane2);
+
+    if (in1 && !prev_lane1_in_present) {
+        if (g_lane1.task == TASK_IDLE && tc_state() == TC_IDLE && !cutter_busy() && !lane_out_present(&g_lane1)) {
+            sync_enabled = false;
+            lane_start(&g_lane1, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
+            cmd_event("PRELOAD", "1");
+        }
+    }
+
+    if (in2 && !prev_lane2_in_present) {
+        if (g_lane2.task == TASK_IDLE && tc_state() == TC_IDLE && !cutter_busy() && !lane_out_present(&g_lane2)) {
+            sync_enabled = false;
+            lane_start(&g_lane2, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
+            cmd_event("PRELOAD", "2");
+        }
+    }
+
+    prev_lane1_in_present = in1;
+    prev_lane2_in_present = in2;
+}
+
 // ===================== Buffer history + sync =====================
 static const char *buf_state_name(buf_state_t s) {
     switch (s) {
@@ -1022,7 +1056,7 @@ static void stall_pump(void) {
 // ===================== Settings persistence =====================
 #define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define SETTINGS_MAGIC 0x4E314F57u // 'N1OW' - NightOwl settings sentinel.
-#define SETTINGS_VERSION 2u
+#define SETTINGS_VERSION 3u
 
 typedef struct {
     uint32_t magic;
@@ -1037,6 +1071,7 @@ typedef struct {
     int buf_hyst_ms, buf_predict_thr_ms;
     float baseline_alpha;
     bool buf_invert;
+    bool auto_preload;
 
     int motion_startup_ms;
     int sgt_l1, sgt_l2;
@@ -1094,6 +1129,7 @@ static void settings_defaults(void) {
     BUF_PREDICT_THR_MS = CONF_BUF_PREDICT_THR_MS;
     g_baseline_alpha = CONF_BASELINE_ALPHA;
     BUF_INVERT = false;
+    AUTO_PRELOAD = true;
 
     MOTION_STARTUP_MS = CONF_MOTION_STARTUP_MS;
     TMC_SGT_L1 = CONF_SGT_L1;
@@ -1152,6 +1188,7 @@ static void settings_save(void) {
     s.buf_predict_thr_ms = BUF_PREDICT_THR_MS;
     s.baseline_alpha = g_baseline_alpha;
     s.buf_invert = BUF_INVERT;
+    s.auto_preload = AUTO_PRELOAD;
 
     s.motion_startup_ms = MOTION_STARTUP_MS;
     s.sgt_l1 = TMC_SGT_L1;
@@ -1256,6 +1293,7 @@ static void settings_load(void) {
     BUF_PREDICT_THR_MS = s->buf_predict_thr_ms;
     g_baseline_alpha = s->baseline_alpha;
     BUF_INVERT = s->buf_invert;
+    AUTO_PRELOAD = s->auto_preload;
 
     MOTION_STARTUP_MS = s->motion_startup_ms;
     TMC_SGT_L1 = s->sgt_l1;
@@ -1508,6 +1546,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             else if (!strcmp(param, "PRE_RAMP"))     PRE_RAMP_SPS = clamp_i(iv, 0, 2000);
             else if (!strcmp(param, "BUF_TRAVEL"))   { BUF_HALF_TRAVEL_MM = fv < 1.0f ? 1.0f : fv > 50.0f ? 50.0f : fv; }
             else if (!strcmp(param, "BUF_HYST"))     BUF_HYST_MS = clamp_i(iv, 5, 500);
+            else if (!strcmp(param, "AUTO_PRELOAD")) AUTO_PRELOAD = (iv != 0);
             else if (!strcmp(param, "BASELINE"))     g_baseline_sps = clamp_i(iv, 200, 30000);
             else if (!strcmp(param, "STARTUP_MS"))   MOTION_STARTUP_MS = clamp_i(iv, 0, 30000);
             else if (!strcmp(param, "SERVO_OPEN"))   SERVO_OPEN_US = clamp_i(iv, 400, 2600);
@@ -1545,6 +1584,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         else if (!strcmp(param, "PRE_RAMP"))     snprintf(out, sizeof(out), "PRE_RAMP:%d", PRE_RAMP_SPS);
         else if (!strcmp(param, "BUF_TRAVEL"))   snprintf(out, sizeof(out), "BUF_TRAVEL:%.3f", (double)BUF_HALF_TRAVEL_MM);
         else if (!strcmp(param, "BUF_HYST"))     snprintf(out, sizeof(out), "BUF_HYST:%d", BUF_HYST_MS);
+        else if (!strcmp(param, "AUTO_PRELOAD")) snprintf(out, sizeof(out), "AUTO_PRELOAD:%d", AUTO_PRELOAD ? 1 : 0);
         else if (!strcmp(param, "BASELINE"))     snprintf(out, sizeof(out), "BASELINE:%d", g_baseline_sps);
         else if (!strcmp(param, "STARTUP_MS"))   snprintf(out, sizeof(out), "STARTUP_MS:%d", MOTION_STARTUP_MS);
         else if (!strcmp(param, "SERVO_OPEN"))   snprintf(out, sizeof(out), "SERVO_OPEN:%d", SERVO_OPEN_US);
@@ -1754,6 +1794,8 @@ int main(void) {
 
     settings_load();
     g_buf.entered_ms = to_ms_since_boot(get_absolute_time());
+    prev_lane1_in_present = lane_in_present(&g_lane1);
+    prev_lane2_in_present = lane_in_present(&g_lane2);
 
     while (true) {
         g_now_ms = to_ms_since_boot(get_absolute_time());
@@ -1776,6 +1818,7 @@ int main(void) {
         // State machines (order matters)
         cutter_tick(g_now_ms);
         tc_tick(g_now_ms);
+        autopreload_tick(g_now_ms);
         lane_tick(&g_lane1, g_now_ms);
         lane_tick(&g_lane2, g_now_ms);
         sync_tick(g_now_ms);
