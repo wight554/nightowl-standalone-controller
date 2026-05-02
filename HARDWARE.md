@@ -28,7 +28,7 @@ Schematic: ERB V2.0 Release SCH.pdf (in FYSETC-ERB/V2.0/hardware/)
 | 15   | Y-DIR          | Motor 2 direction               |
 | 16   | Y-STEP         | Motor 2 step (PWM)              |
 | 17   | Y-UART         | Motor 2 PDN_UART (single-wire)  |
-| 18   | —              | No net in schematic (unrouted)  |
+| 18   | —              | No named net (unused by ERB design); RP2040 GPIO accessible on header, adjacent to GPIO12 |
 | 19   | Y-DIAG         | Motor 2 TMC2209 DIAG output     |
 | 20   | —              | Status LED via R24 1 kΩ → 3.3 V |
 | 21   | NEO_PIXEL      | WS2812 NeoPixel data            |
@@ -193,9 +193,9 @@ PIN_L1_IN   = 2    PIN_L1_OUT  = 3
 PIN_L2_IN   = 4    PIN_L2_OUT  = 5
 PIN_Y_SPLIT = 6
 
-// Buffer
-PIN_BUF_ADVANCE  = 7
-PIN_BUF_TRAILING = 12   // GPIO12 has no schematic net; verify on PCB
+// Buffer (adjacent pins on header)
+PIN_BUF_ADVANCE  = 18   // GPIO18: no named ERB net, accessible on header (row above GPIO12)
+PIN_BUF_TRAILING = 12   // GPIO12: PRE_GATE_0 connector
 
 // Motor 1
 PIN_M1_EN   = 8    PIN_M1_DIR  = 9    PIN_M1_STEP = 10

@@ -27,7 +27,7 @@
 #define PIN_L2_OUT       5
 #define PIN_Y_SPLIT      6
 
-#define PIN_BUF_ADVANCE  7
+#define PIN_BUF_ADVANCE  18
 #define PIN_BUF_TRAILING 12
 
 #define PIN_M1_EN        8
