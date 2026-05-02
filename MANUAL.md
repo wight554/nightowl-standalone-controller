@@ -1,215 +1,210 @@
-
-# NightOwl Standalone Controller – Manual
-
-This document explains how to operate the standalone NightOwl controller.
-
-The controller manages:
-- two filament lanes
-- automatic lane switching
-- buffer control
-- motion monitoring
-- manual feed/reverse
-
-The firmware is designed to keep printing even when a filament spool runs out.
-
----
-
-# Home Screen
-
-The home screen shows:
-
-- Active lane
-- Lane sensor states
-- Buffer state
-- Y splitter state
-- Feed speed
-- Motion status
-
-Example:
-
-A:L1  L1:Y/Y L2:Y/-
-Buf L:Y H:-  Y:Y
-State:AUTO  Feed:5000
-Mot:OK
-
-Meaning:
-
-L1:Y/Y  
-Lane 1 has filament at input and output.
-
-L2:Y/-  
-Lane 2 has filament at input but not yet at output.
-
-Buf L:Y  
-Buffer low triggered.
-
-Buf H:-  
-Buffer high not triggered.
-
-Y:Y  
-Filament present at Y splitter.
-
----
-
-# Automatic Mode
-
-Automatic mode runs continuously when filament is available.
-
-Behaviour:
-
-1. When the buffer becomes LOW the system starts feeding.
-2. The active lane feeds filament.
-3. If the active lane becomes empty the controller prepares a swap.
-4. The system waits until the Y splitter becomes empty.
-5. Then the other lane starts feeding.
-
-This prevents jams and filament collisions inside the Y.
-
----
-
-# Lane Swap Logic
-
-Swap happens when:
-
-- active lane input sensor becomes empty
-- the other lane still has filament
-- Y splitter is empty
-
-This guarantees a clean transition.
-
----
-
-# Manual Mode
-
-Manual mode allows testing motors.
-
-Menu:
-
-Manual →
-
-Options:
-
-Lane  
-Select L1 or L2
-
-Action  
-Feed or Reverse
-
-Run/Stop  
-Start motor
-
-While running:
-
-Rotate encoder → change speed
-
-Back button → stop motor
-
----
-
-# Error Conditions
-
-The controller stops feeding when:
-
-- no filament detected on both lanes
-- motion sensor detects no movement
-- hardware error occurs
-
-Runout signal is triggered via GPIO18.
-
----
-
-# Motion Detection
-
-The motion sensor monitors filament movement.
-
-If no movement is detected while motors are running:
-
-- motion fault triggers
-- runout output activates
-
-Startup delay prevents false alarms during loading.
-
----
-
-# Runout Cooldown
-
-Runout events have a cooldown period.
-
-Default:
-12 seconds
-
-This prevents oscillating runout signals.
-
-Adjustable in Settings.
-
----
-
-# Settings Menu
-
-Settings allow adjusting:
-
-Feed speed  
-Reverse speed  
-Auto speed  
-Motion timeout  
-Motion startup delay  
-Motion fault enable/disable  
-Runout cooldown
-
-All values are applied immediately.
-
----
-
-# USB Runtime Toggles
-
-The controller supports runtime toggles over USB serial (`SET:/GET:`):
-
-- `SM` (`0/1`) - sync mode enable
-- `BI` (`0/1`) - buffer sensor invert
-- `AUTO_PRELOAD` (`0/1`) - auto-start preload on IN sensor rising edge
-
-Related runtime boolean state:
-
-- `TS:<0|1>` - host-reported toolhead filament presence
-- `AP:<0|1>` - appears in `?:` status and shows AUTO_PRELOAD state
-
-Active lane (`LN`) in `?:`:
-
-- `LN:1` or `LN:2` means active lane is known.
-- `LN:0` means unknown (both OUT sensors triggered, or neither).
-- If `LN:0`, lane commands `LO/UL/CU/TC` return `ER:NO_ACTIVE_LANE` until lane is selected (`T:1`/`T:2`) or preload reaches OUT.
-
-Examples:
-
-```bash
-python3 scripts/nightowl_test.py "SET:AUTO_PRELOAD:1" "GET:AUTO_PRELOAD"
-python3 scripts/nightowl_test.py "SET:SM:1" "GET:SM"
-python3 scripts/nightowl_test.py "SET:BI:0" "GET:BI"
+# NightOwl Controller – USB Serial Command Reference
+
+All communication is over USB CDC serial at 115200 baud (line-buffered, `\n` terminated).
+
+```
+Request:   CMD:PAYLOAD\n   (payload may be empty: CMD:\n or just CMD\n)
+Response:  OK:DATA\n       (data absent if not applicable: OK\n)
+           ER:REASON\n
+Events:    EV:TYPE:DATA\n  (unsolicited, emitted any time)
 ```
 
 ---
 
-# Encoder Controls
+## Motion commands
 
-Rotate:
-change values / navigate menus
+| Command | Description |
+|---------|-------------|
+| `LO:` | Load active lane — runs forward at `AUTO_SPS` until OUT sensor triggers, then retracts `RETRACT_MM`. |
+| `UL:` | Unload from extruder — runs reverse at `REV_SPS` until OUT sensor clears. Use when tip is past OUT (in bowden / extruder). |
+| `UM:` | Unload from MMU — runs reverse at `REV_SPS` until IN sensor clears. Use when tip is inside the MMU path. |
+| `CU:` | Run cutter sequence on active lane. Returns `ER:CUTTER_DISABLED` if `CUTTER` toggle is off. |
+| `ST:` | Stop all motion immediately. Aborts toolchange and cutter. |
 
-Confirm short:
-enter menu
-
-Confirm long:
-secondary action (context dependent)
-
-Back:
-exit / stop manual movement
+Both `UL:` and `UM:` stop automatically when the target sensor clears and emit `EV:UNLOADED:<lane>`. Both have a 30-second safety timeout (`EV:UNLOAD_TIMEOUT`).
 
 ---
 
-# Safety Notes
+## Lane / toolchange
 
-Never run the motors without filament path clear.
+| Command | Description |
+|---------|-------------|
+| `T:<1\|2>` | Set active lane without motion. |
+| `TC:<1\|2>` | Full toolchange to lane N. Unloads current lane (cuts if `CUTTER=1`), swaps, loads target lane. Returns `ER:NO_ACTIVE_LANE` if active lane is unknown. |
 
-Always test swaps at low speed when modifying firmware.
+---
 
-Verify sensor logic before enabling automatic swap.
+## Host integration
 
+| Command | Description |
+|---------|-------------|
+| `TS:<0\|1>` | Report toolhead filament presence (`1` = has filament). Used by `TC_TH_MS` wait logic. |
+| `SM:<0\|1>` | Enable (`1`) / disable (`0`) buffer sync mode. |
+
+---
+
+## Status
+
+| Command | Response |
+|---------|----------|
+| `?:` | Full system status (see below). |
+| `VR:` | Firmware version string. |
+| `SG:<1\|2>` | Read StallGuard result for lane N → `OK:<lane>:<value>`. |
+
+### Status fields (`?:`)
+
+```
+LN:<n>         Active lane (0 = unknown)
+TC:<state>     Toolchange FSM state
+L1T:<task>     Lane 1 task (IDLE/AUTOLOAD/FEED/UNLOAD/UNLOAD_MMU)
+L2T:<task>     Lane 2 task
+I1,O1          Lane 1 IN/OUT sensor (1 = filament present)
+I2,O2          Lane 2 IN/OUT sensor
+TH:<n>         Toolhead filament (from TS:)
+YS:<n>         Y-splitter sensor
+BUF:<state>    Buffer state (MID/ADVANCE/TRAILING/FAULT)
+SPS:<n>        Current sync speed (steps/s)
+BL:<n>         Baseline sync speed
+SM:<n>         Sync mode enabled
+BI:<n>         Buffer sensor inverted
+AP:<n>         AUTO_PRELOAD enabled
+CU:<n>         CUTTER enabled
+SG1,SG2        StallGuard raw values
+```
+
+---
+
+## Parameters — `SET:` / `GET:`
+
+### Simple (no lane)
+
+```
+SET:<param>:<value>
+GET:<param>
+```
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `FEED_SPS` | Feed speed (steps/s) | 5000 |
+| `REV_SPS` | Reverse speed (steps/s) | 4000 |
+| `AUTO_SPS` | Autoload speed (steps/s) | 6000 |
+| `STARTUP_MS` | Stall arm delay after motion start (ms) | 10000 |
+| `AUTO_PRELOAD` | Auto-start preload on IN insert (`0`/`1`) | 1 |
+| `RETRACT_MM` | Back-off distance after OUT trigger on autoload (mm) | 10 |
+| `CUTTER` | Enable cutter (`0`/`1`) | 0 |
+| `MM_PER_STEP` | mm of filament per step (derived from config.ini) | from tune.h |
+| `SERVO_OPEN` | Servo open position (µs) | 500 |
+| `SERVO_CLOSE` | Servo close position (µs) | 1400 |
+| `SERVO_SETTLE` | Servo settle time (ms) | 500 |
+| `CUT_FEED` | Feed distance before cut (mm) | 48 |
+| `CUT_LEN` | Cut stroke length (mm) | 10 |
+| `CUT_AMT` | Number of cut repetitions | 1 |
+| `TC_CUT_MS` | Toolchange cut timeout (ms) | 5000 |
+| `TC_UNLOAD_MS` | Toolchange unload timeout (ms) | 8000 |
+| `TC_TH_MS` | Wait for `TS:` from host (ms, 0 = skip) | 3000 |
+| `TC_LOAD_MS` | Toolchange load timeout (ms) | 15000 |
+| `SYNC_MAX` | Max sync speed (steps/s) | 8000 |
+| `SYNC_MIN` | Min sync speed (steps/s) | 0 |
+| `SYNC_UP` | Sync ramp-up increment (steps/s per tick) | 300 |
+| `SYNC_DN` | Sync ramp-down increment (steps/s per tick) | 150 |
+| `SYNC_RATIO` | Buffer arm velocity → speed scale factor | 1.0 |
+| `PRE_RAMP` | Pre-advance speed offset (steps/s) | 400 |
+| `BUF_TRAVEL` | Half-travel of buffer arm (mm) | 5.0 |
+| `BUF_HYST` | Buffer zone debounce (ms) | 30 |
+| `BASELINE` | Baseline sync speed override (steps/s) | adaptive |
+
+### Per-lane
+
+```
+SET:<param>:<lane>:<value>
+GET:<param>:<lane>
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `RUN_CURRENT_MA` | Run current for lane N (mA, 0–2000) |
+| `HOLD_CURRENT_MA` | Hold current for lane N (mA, 0–2000) |
+
+---
+
+## Settings persistence
+
+| Command | Description |
+|---------|-------------|
+| `SV:` | Save all current settings to flash. |
+| `LD:` | Load settings from flash (also called on boot). |
+| `RS:` | Reset to compile-time defaults and save. |
+
+Motor parameters (`RUN_CURRENT_MA`, `HOLD_CURRENT_MA`, `MM_PER_STEP`, `MICROSTEPS`) always come from the compiled `tune.h` on boot — flash values for these are ignored. All other parameters are restored from flash.
+
+---
+
+## TMC register access
+
+| Command | Description |
+|---------|-------------|
+| `TW:<lane>:<reg>:<val>` | Write TMC register. `val` may be decimal or `0x`-prefixed hex. |
+| `TR:<lane>:<reg>` | Read TMC register → `OK:<lane>:<reg>:0x<hex>`. IHOLD_IRUN is returned from shadow (no UART read). |
+| `RR:<lane>` | Scan TMC addresses 0–3 and raw-read GCONF. Useful for bus debug. |
+| `CA:<lane>:<ma>` | Set run current (mA) — shorthand for `TW` to IHOLD_IRUN. |
+
+---
+
+## System
+
+| Command | Description |
+|---------|-------------|
+| `BOOT:` | Reboot into BOOTSEL (USB mass-storage) for flashing. |
+
+---
+
+## Async events
+
+Events are emitted without being requested. Format: `EV:<type>:<data>\n`.
+
+| Event | Data | Meaning |
+|-------|------|---------|
+| `EV:ACTIVE` | `1`, `2`, or `NONE` | Active lane changed |
+| `EV:PRELOAD` | `<lane>` | Auto-preload started on lane insert |
+| `EV:UNLOADED` | `<lane>` | Unload completed (sensor cleared) |
+| `EV:UNLOAD_TIMEOUT` | — | Unload timed out (30 s) |
+| `EV:RUNOUT` | `<lane>` | IN sensor lost while feeding |
+| `EV:STALL` | `<lane>` | StallGuard triggered |
+| `EV:TC:CUTTING` | `<lane>` | Toolchange: starting cut |
+| `EV:TC:UNLOADING` | `<lane>` | Toolchange: unloading |
+| `EV:TC:SWAPPING` | `<from>-><to>` | Toolchange: swapping lanes |
+| `EV:TC:LOADING` | `<lane>` | Toolchange: loading new lane |
+| `EV:TC:DONE` | `<lane>` | Toolchange completed |
+| `EV:TC:ERROR` | `<reason>` | Toolchange failed |
+| `EV:CUT:FEEDING` | — | Cutter feed phase started |
+| `EV:BS` | `<zone>,<sps>` | Buffer sync update (500 ms interval) |
+
+---
+
+## Quick reference
+
+```bash
+# Status
+python3 scripts/nightowl_test.py "?:"
+
+# Load lane 1
+python3 scripts/nightowl_test.py "T:1" "LO:"
+
+# Unload from extruder (tip past OUT sensor)
+python3 scripts/nightowl_test.py "UL:"
+
+# Unload from MMU (tip inside MMU, before OUT sensor)
+python3 scripts/nightowl_test.py "UM:"
+
+# Toolchange to lane 2
+python3 scripts/nightowl_test.py "TC:2"
+
+# Tune stall threshold
+python3 scripts/nightowl_test.py "SET:STARTUP_MS:500" "SG:1"
+
+# Save settings
+python3 scripts/nightowl_test.py "SV:"
+
+# Reboot to BOOTSEL
+python3 scripts/nightowl_test.py "BOOT:"
+```
