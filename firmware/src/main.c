@@ -295,6 +295,10 @@ typedef struct lane_s {
     uint32_t autoload_deadline_ms;
     uint32_t retract_deadline_ms;
 
+    int target_sps;
+    int current_sps;
+    uint32_t ramp_last_tick_ms;
+
     tmc_t *tmc;
     uint diag_pin;
     uint32_t motion_started_ms;
@@ -451,6 +455,9 @@ static void lane_setup(lane_t *L, uint pin_in, uint pin_out, motor_t m, int lane
     L->m = m;
     L->task = TASK_IDLE;
     L->autoload_deadline_ms = 0;
+    L->target_sps = 0;
+    L->current_sps = 0;
+    L->ramp_last_tick_ms = 0;
     L->tmc = tmc;
     L->diag_pin = diag_pin;
     L->motion_started_ms = 0;
@@ -467,6 +474,8 @@ static void lane_stop(lane_t *L) {
     L->stall_armed = false;
     L->unload_sensor_latch = false;
     L->retract_deadline_ms = 0;
+    L->current_sps = 0;
+    L->target_sps = 0;
     motor_stop(&L->m);
 }
 
@@ -484,12 +493,26 @@ static void lane_start(lane_t *L, task_t t, int sps, bool forward, uint32_t now_
         L->autoload_deadline_ms = 0; // callers that want a timeout set it after lane_start
     }
 
+    L->target_sps = sps;
+    L->current_sps = RAMP_STEP_SPS;
+    L->ramp_last_tick_ms = now_ms;
+
     motor_enable(&L->m, true);
     motor_set_dir(&L->m, forward);
-    motor_set_rate_sps(&L->m, sps);
+    motor_set_rate_sps(&L->m, L->current_sps);
 }
 
 static void lane_tick(lane_t *L, uint32_t now_ms) {
+    // Acceleration ramp: step current_sps toward target_sps every RAMP_TICK_MS.
+    if (L->task != TASK_IDLE && L->current_sps < L->target_sps) {
+        if ((int32_t)(now_ms - L->ramp_last_tick_ms) >= RAMP_TICK_MS) {
+            L->ramp_last_tick_ms = now_ms;
+            L->current_sps += RAMP_STEP_SPS;
+            if (L->current_sps > L->target_sps) L->current_sps = L->target_sps;
+            motor_set_rate_sps(&L->m, L->current_sps);
+        }
+    }
+
     if (!L->stall_armed && L->task != TASK_IDLE) {
         if ((int32_t)(now_ms - L->motion_started_ms) >= MOTION_STARTUP_MS) {
             L->stall_armed = true;
@@ -507,7 +530,11 @@ static void lane_tick(lane_t *L, uint32_t now_ms) {
                 L->task = TASK_UNLOAD;
                 L->stall_armed = false;
                 motor_set_dir(&L->m, false);
-                motor_set_rate_sps(&L->m, REV_SPS);
+                // Ramp from zero in reverse direction.
+                L->target_sps = REV_SPS;
+                L->current_sps = RAMP_STEP_SPS;
+                L->ramp_last_tick_ms = now_ms;
+                motor_set_rate_sps(&L->m, L->current_sps);
             } else {
                 lane_stop(L);
             }
@@ -1618,7 +1645,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             return;
         }
         lane_t *other = lane_ptr(other_lane(active_lane));
-        if (other && lane_out_present(other)) {
+        if (other && lane_out_present(other) && other->task == TASK_IDLE) {
             cmd_reply("ER", "OTHER_LANE_ACTIVE");
             return;
         }
@@ -2019,6 +2046,14 @@ int main(void) {
     settings_load();
     g_buf.entered_ms = to_ms_since_boot(get_absolute_time());
     active_lane = detect_active_lane_from_out();
+    if (active_lane == 0) {
+        // Fall back: filament parked before OUT (pre-loaded state).
+        // Pick lane 1 first; if only lane 2 has filament, pick lane 2.
+        if (lane_in_present(&g_lane1) && !lane_out_present(&g_lane1))
+            active_lane = 1;
+        else if (lane_in_present(&g_lane2) && !lane_out_present(&g_lane2))
+            active_lane = 2;
+    }
     prev_lane1_in_present = lane_in_present(&g_lane1);
     prev_lane2_in_present = lane_in_present(&g_lane2);
 
