@@ -273,8 +273,9 @@ typedef enum {
     TASK_IDLE = 0,
     TASK_AUTOLOAD,
     TASK_FEED,
-    TASK_UNLOAD,     // extruder unload: reverse until OUT clears
-    TASK_UNLOAD_MMU  // MMU unload: reverse until IN clears
+    TASK_UNLOAD,      // extruder unload: reverse until OUT clears
+    TASK_UNLOAD_MMU,  // MMU unload: reverse until IN clears
+    TASK_LOAD_FULL    // full load: forward until toolhead sensor (TS:1), then stop
 } task_t;
 
 typedef enum {
@@ -552,6 +553,18 @@ static void lane_tick(lane_t *L, uint32_t now_ms) {
         }
     }
 
+    if (L->task == TASK_LOAD_FULL) {
+        // Full load: forward until host reports toolhead sensor (TS:1), then stop.
+        if (toolhead_has_filament) {
+            lane_stop(L);
+            char lane_s[2] = { (char)('0' + L->lane_id), 0 };
+            cmd_event("LOADED", lane_s);
+        } else if (L->autoload_deadline_ms != 0 && (int32_t)(now_ms - L->autoload_deadline_ms) >= 0) {
+            lane_stop(L);
+            cmd_event("LOAD_TIMEOUT", NULL);
+        }
+    }
+
     if ((L->task == TASK_FEED || L->task == TASK_AUTOLOAD) && !lane_in_present(L)) {
         if ((int32_t)(now_ms - L->motion_started_ms) >= MOTION_STARTUP_MS &&
             (int32_t)(now_ms - L->runout_block_until_ms) >= 0) {
@@ -797,6 +810,7 @@ static const char *task_name(task_t t) {
         case TASK_FEED: return "FEED";
         case TASK_UNLOAD: return "UNLOAD";
         case TASK_UNLOAD_MMU: return "UNLOAD_MMU";
+        case TASK_LOAD_FULL: return "LOAD_FULL";
         default: return "?";
     }
 }
@@ -1575,6 +1589,35 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         sync_enabled = false;
         lane_start(A, TASK_UNLOAD_MMU, REV_SPS, false, now_ms, 0);
         A->autoload_deadline_ms = now_ms + 30000u;
+        cmd_reply("OK", NULL);
+    } else if (!strcmp(cmd, "FD")) {
+        lane_t *A = lane_ptr(active_lane);
+        if (!A) {
+            cmd_reply("ER", "NO_ACTIVE_LANE");
+            return;
+        }
+        sync_enabled = false;
+        lane_start(A, TASK_FEED, FEED_SPS, true, now_ms, 0);
+        cmd_reply("OK", NULL);
+    } else if (!strcmp(cmd, "FL")) {
+        lane_t *A = lane_ptr(active_lane);
+        if (!A) {
+            cmd_reply("ER", "NO_ACTIVE_LANE");
+            return;
+        }
+        if (!lane_in_present(A)) {
+            cmd_reply("ER", "NO_FILAMENT");
+            return;
+        }
+        lane_t *other = lane_ptr(other_lane(active_lane));
+        if (other && lane_out_present(other)) {
+            cmd_reply("ER", "OTHER_LANE_ACTIVE");
+            return;
+        }
+        sync_enabled = false;
+        toolhead_has_filament = false;
+        lane_start(A, TASK_LOAD_FULL, FEED_SPS, true, now_ms, 0);
+        A->autoload_deadline_ms = now_ms + (uint32_t)TC_TIMEOUT_LOAD_MS;
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "CU")) {
         if (!ENABLE_CUTTER) {
