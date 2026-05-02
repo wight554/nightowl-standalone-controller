@@ -869,9 +869,16 @@ static void tc_tick(uint32_t now_ms) {
         case TC_UNLOAD_REVERSE: {
             char lane_s[2] = { (char)('0' + active_lane), 0 };
             cmd_event("TC:UNLOADING", lane_s);
-            lane_start(A, TASK_UNLOAD, REV_SPS, false, now_ms, 0);
-            g_tc_ctx.phase_start_ms = now_ms;
-            g_tc_ctx.state = TC_UNLOAD_WAIT_OUT;
+            if (!lane_out_present(A)) {
+                // Already before OUT (pre-loaded); skip reverse entirely.
+                g_tc_ctx.phase_start_ms = now_ms;
+                g_tc_ctx.state = (TC_TIMEOUT_Y_MS > 0) ? TC_UNLOAD_WAIT_Y :
+                                 (TC_TIMEOUT_TH_MS > 0) ? TC_UNLOAD_WAIT_TH : TC_UNLOAD_DONE;
+            } else {
+                lane_start(A, TASK_UNLOAD, REV_SPS, false, now_ms, 0);
+                g_tc_ctx.phase_start_ms = now_ms;
+                g_tc_ctx.state = TC_UNLOAD_WAIT_OUT;
+            }
             break;
         }
 
@@ -1607,10 +1614,8 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "UL")) {
         lane_t *A = lane_ptr(active_lane);
-        if (!A) {
-            cmd_reply("ER", "NO_ACTIVE_LANE");
-            return;
-        }
+        if (!A) { cmd_reply("ER", "NO_ACTIVE_LANE"); return; }
+        if (!lane_out_present(A)) { cmd_reply("ER", "NOT_LOADED"); return; }
         sync_enabled = false;
         lane_start(A, TASK_UNLOAD, REV_SPS, false, now_ms, 0);
         A->autoload_deadline_ms = now_ms + (uint32_t)TC_TIMEOUT_UNLOAD_MS;

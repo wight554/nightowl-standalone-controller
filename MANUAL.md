@@ -18,7 +18,7 @@ Events:    EV:TYPE:DATA\n  (unsolicited, emitted any time)
 | `LO:` | Load active lane — runs forward at `AUTO_SPS` until OUT sensor triggers, then retracts `RETRACT_MM`. Parks filament at OUT position. |
 | `FD:` | Manual continuous forward feed at `FEED_SPS`. Runs until `ST:`. No auto-stop. |
 | `FL:` | Full load to toolhead — runs forward at `FEED_SPS` until host sends `TS:1` (toolhead sensor). Guards: IN sensor must be present, other lane OUT must be clear. Timeout = `TC_LOAD_MS`. Emits `EV:LOADED:<lane>` on success, `EV:LOAD_TIMEOUT` on timeout. |
-| `UL:` | Unload from extruder — runs reverse at `REV_SPS` until OUT sensor clears. Use when tip is past OUT (in bowden / extruder). |
+| `UL:` | Unload from extruder — runs reverse at `REV_SPS` until OUT sensor clears. Use when tip is past OUT (in bowden / extruder). Returns `ER:NOT_LOADED` if OUT is not triggered (use `UM:` instead). |
 | `UM:` | Unload from MMU — runs reverse at `REV_SPS` until IN sensor clears. Use when tip is inside the MMU path. |
 | `CU:` | Run cutter sequence on active lane. Returns `ER:CUTTER_DISABLED` if `CUTTER` toggle is off. |
 | `ST:` | Stop all motion immediately. Aborts toolchange and cutter. |
