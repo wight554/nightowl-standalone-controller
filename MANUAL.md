@@ -171,7 +171,7 @@ Events are emitted without being requested. Format: `EV:<type>:<data>\n`.
 | `EV:PRELOAD` | `<lane>` | Auto-preload started on lane insert |
 | `EV:UNLOADED` | `<lane>` | Unload completed (sensor cleared) |
 | `EV:UNLOAD_TIMEOUT` | — | Unload timed out (30 s) |
-| `EV:RUNOUT` | `<lane>` | IN sensor lost while feeding |
+| `EV:RUNOUT` | `<lane>` | IN sensor lost while feeding or during full load (filament tail passed through) |
 | `EV:STALL` | `<lane>` | StallGuard triggered |
 | `EV:TC:CUTTING` | `<lane>` | Toolchange: starting cut |
 | `EV:TC:UNLOADING` | `<lane>` | Toolchange: unloading |

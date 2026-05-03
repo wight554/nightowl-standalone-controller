@@ -586,6 +586,12 @@ static void lane_tick(lane_t *L, uint32_t now_ms) {
             lane_stop(L);
             char lane_s[2] = { (char)('0' + L->lane_id), 0 };
             cmd_event("LOADED", lane_s);
+        } else if (!lane_in_present(L) &&
+                   (int32_t)(now_ms - L->motion_started_ms) >= 1000) {
+            // Filament tail passed IN before reaching OUT — nothing on the spool.
+            lane_stop(L);
+            char lane_s[2] = { (char)('0' + L->lane_id), 0 };
+            cmd_event("RUNOUT", lane_s);
         } else if (L->autoload_deadline_ms != 0 && (int32_t)(now_ms - L->autoload_deadline_ms) >= 0) {
             lane_stop(L);
             cmd_event("LOAD_TIMEOUT", NULL);
