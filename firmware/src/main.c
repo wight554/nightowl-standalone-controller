@@ -387,7 +387,6 @@ typedef struct {
     int target_lane;
     int from_lane;
     uint32_t phase_start_ms;
-    bool sync_was_enabled;
 } tc_ctx_t;
 
 typedef enum {
@@ -450,6 +449,13 @@ static bool prev_lane2_in_present = false;
 
 // ===================== Forward declarations =====================
 static void cmd_event(const char *type, const char *data);
+
+// Auto-enable/disable sync whenever toolhead filament state changes.
+static void set_toolhead_filament(bool present) {
+    toolhead_has_filament = present;
+    sync_enabled = present;
+    if (!present) sync_current_sps = 0;
+}
 
 // ===================== Lane helpers =====================
 static inline bool lane_in_present(lane_t *L) { return on_al(&L->in_sw); }
@@ -627,7 +633,7 @@ static void lane_tick(lane_t *L, uint32_t now_ms) {
             if (g_buf.state == BUF_TRAILING) {
                 if (L->buf_advance_since_ms == 0) L->buf_advance_since_ms = now_ms;
                 else if ((int32_t)(now_ms - L->buf_advance_since_ms) >= TS_BUF_FALLBACK_MS)
-                    toolhead_has_filament = true;
+                    set_toolhead_filament(true);
             } else {
                 L->buf_advance_since_ms = 0;
             }
@@ -857,10 +863,9 @@ static void tc_start(int target_lane, uint32_t now_ms) {
 
     g_tc_ctx.target_lane = target_lane;
     g_tc_ctx.from_lane = active_lane;
-    g_tc_ctx.sync_was_enabled = sync_enabled;
     g_tc_ctx.phase_start_ms = now_ms;
 
-    sync_enabled = false;
+    set_toolhead_filament(false);
     if (target_lane == active_lane) {
         g_tc_ctx.state = TC_LOAD_START;
     } else if (ENABLE_CUTTER) {
@@ -875,7 +880,7 @@ static void tc_abort(void) {
     if (g_tc_ctx.state == TC_IDLE) return;
     stop_all();
     cutter_abort();
-    sync_enabled = false;
+    set_toolhead_filament(false);
     g_tc_ctx.state = TC_IDLE;
     cmd_event("TC:ERROR", "ABORTED");
 }
@@ -1000,7 +1005,7 @@ static void tc_tick(uint32_t now_ms) {
             }
             char lane_s[2] = { (char)('0' + active_lane), 0 };
             cmd_event("TC:LOADING", lane_s);
-            toolhead_has_filament = false;
+            set_toolhead_filament(false);
             lane_start(A, TASK_LOAD_FULL, FEED_SPS, true, now_ms, 0);
             A->autoload_deadline_ms = now_ms + (uint32_t)TC_TIMEOUT_LOAD_MS;
             g_tc_ctx.phase_start_ms = now_ms;
@@ -1032,7 +1037,8 @@ static void tc_tick(uint32_t now_ms) {
         case TC_LOAD_DONE: {
             char lane_s[2] = { (char)('0' + active_lane), 0 };
             cmd_event("TC:DONE", lane_s);
-            sync_enabled = g_tc_ctx.sync_was_enabled;
+            // toolhead_has_filament was set to true when load completed; sync is
+            // already enabled via set_toolhead_filament — nothing extra needed here.
             g_tc_ctx.state = TC_IDLE;
             break;
         }
@@ -1051,7 +1057,6 @@ static void autopreload_tick(uint32_t now_ms) {
 
     if (in1 && !prev_lane1_in_present) {
         if (g_lane1.task == TASK_IDLE && tc_state() == TC_IDLE && !cutter_busy() && !lane_out_present(&g_lane1)) {
-            sync_enabled = false;
             lane_start(&g_lane1, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
             cmd_event("PRELOAD", "1");
             // Set active lane at insert time (matches Klipper insert_gcode logic).
@@ -1064,7 +1069,6 @@ static void autopreload_tick(uint32_t now_ms) {
 
     if (in2 && !prev_lane2_in_present) {
         if (g_lane2.task == TASK_IDLE && tc_state() == TC_IDLE && !cutter_busy() && !lane_out_present(&g_lane2)) {
-            sync_enabled = false;
             lane_start(&g_lane2, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
             cmd_event("PRELOAD", "2");
             // Set active lane at insert time.
@@ -1773,14 +1777,13 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             cmd_reply("ER", "NO_ACTIVE_LANE");
             return;
         }
-        sync_enabled = false;
         lane_start(A, TASK_AUTOLOAD, AUTO_SPS, true, now_ms, 6000);
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "UL")) {
         lane_t *A = lane_ptr(active_lane);
         if (!A) { cmd_reply("ER", "NO_ACTIVE_LANE"); return; }
         if (!lane_out_present(A)) { cmd_reply("ER", "NOT_LOADED"); return; }
-        sync_enabled = false;
+        set_toolhead_filament(false);
         lane_start(A, TASK_UNLOAD, REV_SPS, false, now_ms, 0);
         A->autoload_deadline_ms = now_ms + (uint32_t)TC_TIMEOUT_UNLOAD_MS;
         cmd_reply("OK", NULL);
@@ -1790,7 +1793,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             cmd_reply("ER", "NO_ACTIVE_LANE");
             return;
         }
-        sync_enabled = false;
+        set_toolhead_filament(false);
         lane_start(A, TASK_UNLOAD_MMU, REV_SPS, false, now_ms, 0);
         A->autoload_deadline_ms = now_ms + (uint32_t)TC_TIMEOUT_UNLOAD_MS;
         cmd_reply("OK", NULL);
@@ -1800,7 +1803,6 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             cmd_reply("ER", "NO_ACTIVE_LANE");
             return;
         }
-        sync_enabled = false;
         lane_start(A, TASK_FEED, FEED_SPS, true, now_ms, 0);
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "FL")) {
@@ -1818,8 +1820,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             cmd_reply("ER", "OTHER_LANE_ACTIVE");
             return;
         }
-        sync_enabled = false;
-        toolhead_has_filament = false;
+        set_toolhead_filament(false);
         lane_start(A, TASK_LOAD_FULL, FEED_SPS, true, now_ms, 0);
         A->autoload_deadline_ms = now_ms + (uint32_t)TC_TIMEOUT_LOAD_MS;
         cmd_reply("OK", NULL);
@@ -1833,7 +1834,6 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             cmd_reply("ER", "NO_ACTIVE_LANE");
             return;
         }
-        sync_enabled = false;
         cutter_start(A, now_ms);
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "MV")) {
@@ -1854,7 +1854,6 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         float dist_mm = mm < 0.0f ? -mm : mm;
         uint32_t duration_ms = (uint32_t)(dist_mm / ((float)sps * MM_PER_STEP) * 1000.0f);
         if (duration_ms < 1) duration_ms = 1;
-        sync_enabled = false;
         lane_start(A, TASK_MOVE, sps, forward, now_ms, 0);
         A->autoload_deadline_ms = now_ms + duration_ms;
         cmd_reply("OK", NULL);
@@ -1862,11 +1861,12 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         tc_abort();
         cutter_abort();
         stop_all();
+        set_toolhead_filament(false);
         cmd_reply("OK", NULL);
     } else if (!strcmp(cmd, "TS")) {
         int v = atoi(p);
         if (v == 0 || v == 1) {
-            toolhead_has_filament = (v == 1);
+            set_toolhead_filament(v == 1);
             cmd_reply("OK", NULL);
         } else {
             cmd_reply("ER", "ARG");

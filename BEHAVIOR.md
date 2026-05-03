@@ -194,6 +194,25 @@ by sensor events (IN/OUT) as described in the load failure section above.
 
 ---
 
+## Sync mode auto-toggle
+
+Buffer sync (`SM:`) is managed automatically — `SM:1`/`SM:0` are available for
+debugging but are not needed in normal operation.
+
+| Event | Sync state |
+|-------|-----------|
+| `TS:1` received | enabled |
+| `FL:`/`TC:` load completes (TS:1 or buffer fallback) | enabled |
+| `UL:`, `UM:`, or `TC:` unload starts | disabled |
+| `FL:` command issued | disabled |
+| `ST:` command | disabled |
+
+Sync is never active during loading, unloading, or pre-load operations.
+Autopreload (`LO:` or IN-sensor insert) on a non-active lane does **not**
+interrupt sync running on the active lane.
+
+---
+
 ## Active lane tracking
 
 `active_lane` (0 = unknown, 1 or 2) is changed by:
