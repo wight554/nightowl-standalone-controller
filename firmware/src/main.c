@@ -123,6 +123,15 @@ static inline int clamp_i(int v, int lo, int hi) {
     return v;
 }
 
+static inline int mm_per_min_to_sps(float mm_per_min) {
+    if (mm_per_min <= 0.0f) return 0;
+    return (int)(mm_per_min / 60.0f / MM_PER_STEP + 0.5f);
+}
+
+static inline float sps_to_mm_per_min(int sps) {
+    return (float)sps * MM_PER_STEP * 60.0f;
+}
+
 static int lane_to_idx(int ln) {
     return (ln == 1) ? 0 : 1;
 }
@@ -1623,7 +1632,7 @@ static void status_dump(void) {
     snprintf(b, sizeof(b),
         "LN:%d,TC:%s,L1T:%s,L2T:%s,"
         "I1:%d,O1:%d,I2:%d,O2:%d,"
-        "TH:%d,YS:%d,BUF:%s,SPS:%d,BL:%d,SM:%d,BI:%d,AP:%d,CU:%d,"
+        "TH:%d,YS:%d,BUF:%s,SPS:%.1f,BL:%.1f,SM:%d,BI:%d,AP:%d,CU:%d,"
         "SG1:%u,SG2:%u,SGF:%d",
         active_lane, tc_state_name(g_tc_ctx.state),
         task_name(g_lane1.task), task_name(g_lane2.task),
@@ -1634,8 +1643,8 @@ static void status_dump(void) {
         toolhead_has_filament ? 1 : 0,
         on_al(&g_y_split) ? 1 : 0,
         buf_state_name(g_buf.state),
-        sync_current_sps,
-        g_baseline_sps,
+        (double)sps_to_mm_per_min(sync_current_sps),
+        (double)sps_to_mm_per_min(g_baseline_sps),
         sync_enabled ? 1 : 0,
         BUF_INVERT ? 1 : 0,
         AUTO_PRELOAD ? 1 : 0,
@@ -1872,23 +1881,23 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
                 }
             } else if (lane_param) {
                 handled = false;
-            } else if (!strcmp(param, "FEED_SPS"))     FEED_SPS = clamp_i(iv, 200, 30000);
-            else if (!strcmp(param, "REV_SPS"))      REV_SPS = clamp_i(iv, 200, 30000);
-            else if (!strcmp(param, "AUTO_SPS"))     AUTO_SPS = clamp_i(iv, 200, 30000);
-            else if (!strcmp(param, "SYNC_MAX"))     SYNC_MAX_SPS = clamp_i(iv, 200, 30000);
-            else if (!strcmp(param, "SYNC_MIN"))     SYNC_MIN_SPS = clamp_i(iv, 0, 30000);
+            } else if (!strcmp(param, "FEED"))       FEED_SPS = clamp_i(mm_per_min_to_sps(fv), 200, 50000);
+            else if (!strcmp(param, "REV"))          REV_SPS = clamp_i(mm_per_min_to_sps(fv), 200, 50000);
+            else if (!strcmp(param, "AUTO"))         AUTO_SPS = clamp_i(mm_per_min_to_sps(fv), 200, 50000);
+            else if (!strcmp(param, "SYNC_MAX"))     SYNC_MAX_SPS = clamp_i(mm_per_min_to_sps(fv), 200, 50000);
+            else if (!strcmp(param, "SYNC_MIN"))     SYNC_MIN_SPS = clamp_i(mm_per_min_to_sps(fv), 0, 50000);
             else if (!strcmp(param, "SYNC_UP"))      SYNC_RAMP_UP_SPS = clamp_i(iv, 10, 2000);
             else if (!strcmp(param, "SYNC_DN"))      SYNC_RAMP_DN_SPS = clamp_i(iv, 10, 2000);
             else if (!strcmp(param, "SYNC_RATIO"))   { SYNC_RATIO = fv < 0.1f ? 0.1f : fv > 5.0f ? 5.0f : fv; }
-            else if (!strcmp(param, "PRE_RAMP"))     PRE_RAMP_SPS = clamp_i(iv, 0, 2000);
+            else if (!strcmp(param, "PRE_RAMP"))     PRE_RAMP_SPS = clamp_i(mm_per_min_to_sps(fv), 0, 50000);
             else if (!strcmp(param, "BUF_TRAVEL"))   { BUF_HALF_TRAVEL_MM = fv < 1.0f ? 1.0f : fv > 50.0f ? 50.0f : fv; }
             else if (!strcmp(param, "BUF_HYST"))     BUF_HYST_MS = clamp_i(iv, 5, 500);
             else if (!strcmp(param, "AUTO_PRELOAD"))    AUTO_PRELOAD = (iv != 0);
             else if (!strcmp(param, "RETRACT_MM"))       AUTOLOAD_RETRACT_MM = clamp_i(iv, 0, 50);
             else if (!strcmp(param, "CUTTER"))            ENABLE_CUTTER = (iv != 0);
-            else if (!strcmp(param, "BASELINE"))         g_baseline_sps = clamp_i(iv, 200, 30000);
+            else if (!strcmp(param, "BASELINE"))         g_baseline_sps = clamp_i(mm_per_min_to_sps(fv), 200, 50000);
             else if (!strcmp(param, "SG_SYNC_THR"))  SG_SYNC_THR = clamp_i(iv, 0, 511);
-            else if (!strcmp(param, "SG_SYNC_TRIM")) SG_SYNC_TRIM_SPS = clamp_i(iv, 0, 5000);
+            else if (!strcmp(param, "SG_SYNC_TRIM")) SG_SYNC_TRIM_SPS = clamp_i(mm_per_min_to_sps(fv), 0, 50000);
             else if (!strcmp(param, "SG_ALPHA"))     { SG_ALPHA = fv < 0.01f ? 0.01f : fv > 1.0f ? 1.0f : fv; }
             else if (!strcmp(param, "STARTUP_MS"))   MOTION_STARTUP_MS = clamp_i(iv, 0, 30000);
             else if (!strcmp(param, "SERVO_OPEN"))   SERVO_OPEN_US = clamp_i(iv, 400, 2600);
@@ -1916,23 +1925,23 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         int idx = (lane == 1 || lane == 2) ? lane_to_idx(lane) : -1;
         const char *param = lane_param ? key : p;
         bool handled = true;
-        if      (!strcmp(param, "FEED_SPS"))     snprintf(out, sizeof(out), "FEED_SPS:%d", FEED_SPS);
-        else if (!strcmp(param, "REV_SPS"))      snprintf(out, sizeof(out), "REV_SPS:%d", REV_SPS);
-        else if (!strcmp(param, "AUTO_SPS"))     snprintf(out, sizeof(out), "AUTO_SPS:%d", AUTO_SPS);
-        else if (!strcmp(param, "SYNC_MAX"))     snprintf(out, sizeof(out), "SYNC_MAX:%d", SYNC_MAX_SPS);
-        else if (!strcmp(param, "SYNC_MIN"))     snprintf(out, sizeof(out), "SYNC_MIN:%d", SYNC_MIN_SPS);
+        if      (!strcmp(param, "FEED"))         snprintf(out, sizeof(out), "FEED:%.1f", (double)sps_to_mm_per_min(FEED_SPS));
+        else if (!strcmp(param, "REV"))          snprintf(out, sizeof(out), "REV:%.1f", (double)sps_to_mm_per_min(REV_SPS));
+        else if (!strcmp(param, "AUTO"))         snprintf(out, sizeof(out), "AUTO:%.1f", (double)sps_to_mm_per_min(AUTO_SPS));
+        else if (!strcmp(param, "SYNC_MAX"))     snprintf(out, sizeof(out), "SYNC_MAX:%.1f", (double)sps_to_mm_per_min(SYNC_MAX_SPS));
+        else if (!strcmp(param, "SYNC_MIN"))     snprintf(out, sizeof(out), "SYNC_MIN:%.1f", (double)sps_to_mm_per_min(SYNC_MIN_SPS));
         else if (!strcmp(param, "SYNC_UP"))      snprintf(out, sizeof(out), "SYNC_UP:%d", SYNC_RAMP_UP_SPS);
         else if (!strcmp(param, "SYNC_DN"))      snprintf(out, sizeof(out), "SYNC_DN:%d", SYNC_RAMP_DN_SPS);
         else if (!strcmp(param, "SYNC_RATIO"))   snprintf(out, sizeof(out), "SYNC_RATIO:%.3f", (double)SYNC_RATIO);
-        else if (!strcmp(param, "PRE_RAMP"))     snprintf(out, sizeof(out), "PRE_RAMP:%d", PRE_RAMP_SPS);
+        else if (!strcmp(param, "PRE_RAMP"))     snprintf(out, sizeof(out), "PRE_RAMP:%.1f", (double)sps_to_mm_per_min(PRE_RAMP_SPS));
         else if (!strcmp(param, "BUF_TRAVEL"))   snprintf(out, sizeof(out), "BUF_TRAVEL:%.3f", (double)BUF_HALF_TRAVEL_MM);
         else if (!strcmp(param, "BUF_HYST"))     snprintf(out, sizeof(out), "BUF_HYST:%d", BUF_HYST_MS);
         else if (!strcmp(param, "AUTO_PRELOAD")) snprintf(out, sizeof(out), "AUTO_PRELOAD:%d", AUTO_PRELOAD ? 1 : 0);
         else if (!strcmp(param, "RETRACT_MM"))    snprintf(out, sizeof(out), "RETRACT_MM:%d", AUTOLOAD_RETRACT_MM);
         else if (!strcmp(param, "CUTTER"))         snprintf(out, sizeof(out), "CUTTER:%d", ENABLE_CUTTER ? 1 : 0);
-        else if (!strcmp(param, "BASELINE"))     snprintf(out, sizeof(out), "BASELINE:%d", g_baseline_sps);
+        else if (!strcmp(param, "BASELINE"))     snprintf(out, sizeof(out), "BASELINE:%.1f", (double)sps_to_mm_per_min(g_baseline_sps));
         else if (!strcmp(param, "SG_SYNC_THR"))  snprintf(out, sizeof(out), "SG_SYNC_THR:%d", SG_SYNC_THR);
-        else if (!strcmp(param, "SG_SYNC_TRIM")) snprintf(out, sizeof(out), "SG_SYNC_TRIM:%d", SG_SYNC_TRIM_SPS);
+        else if (!strcmp(param, "SG_SYNC_TRIM")) snprintf(out, sizeof(out), "SG_SYNC_TRIM:%.1f", (double)sps_to_mm_per_min(SG_SYNC_TRIM_SPS));
         else if (!strcmp(param, "SG_ALPHA"))     snprintf(out, sizeof(out), "SG_ALPHA:%.3f", (double)SG_ALPHA);
         else if (!strcmp(param, "STARTUP_MS"))   snprintf(out, sizeof(out), "STARTUP_MS:%d", MOTION_STARTUP_MS);
         else if (!strcmp(param, "SERVO_OPEN"))   snprintf(out, sizeof(out), "SERVO_OPEN:%d", SERVO_OPEN_US);

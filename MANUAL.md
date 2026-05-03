@@ -15,11 +15,11 @@ Events:    EV:TYPE:DATA\n  (unsolicited, emitted any time)
 
 | Command | Description |
 |---------|-------------|
-| `LO:` | Load active lane — runs forward at `AUTO_SPS` until OUT sensor triggers, then retracts `RETRACT_MM`. Parks filament at OUT position. |
-| `FD:` | Manual continuous forward feed at `FEED_SPS`. Runs until `ST:`. No auto-stop. |
-| `FL:` | Full load to toolhead — runs forward at `FEED_SPS` until host sends `TS:1` (toolhead sensor). Guards: IN sensor must be present, other lane OUT must be clear. Timeout = `TC_LOAD_MS`. Emits `EV:LOADED:<lane>` on success, `EV:LOAD_TIMEOUT` on timeout. |
-| `UL:` | Unload from extruder — runs reverse at `REV_SPS` until OUT sensor clears. Use when tip is past OUT (in bowden / extruder). Returns `ER:NOT_LOADED` if OUT is not triggered (use `UM:` instead). |
-| `UM:` | Unload from MMU — runs reverse at `REV_SPS` until IN sensor clears. Use when tip is inside the MMU path. |
+| `LO:` | Load active lane — runs forward at `AUTO` speed until OUT sensor triggers, then retracts `RETRACT_MM`. Parks filament at OUT position. |
+| `FD:` | Manual continuous forward feed at `FEED` speed. Runs until `ST:`. No auto-stop. |
+| `FL:` | Full load to toolhead — runs forward at `FEED` speed until host sends `TS:1` (toolhead sensor). Guards: IN sensor must be present, other lane OUT must be clear. Timeout = `TC_LOAD_MS`. Emits `EV:LOADED:<lane>` on success, `EV:LOAD_TIMEOUT` on timeout. |
+| `UL:` | Unload from extruder — runs reverse at `REV` speed until OUT sensor clears. Use when tip is past OUT (in bowden / extruder). Returns `ER:NOT_LOADED` if OUT is not triggered (use `UM:` instead). |
+| `UM:` | Unload from MMU — runs reverse at `REV` speed until IN sensor clears. Use when tip is inside the MMU path. |
 | `MV:<mm>:<f>` | Move active lane exactly `mm` millimetres at feed rate `f` mm/min (Klipper `F` units). Positive `mm` = forward, negative = reverse. Motor ramps up then runs for the computed duration, then stops. Emits `EV:MOVE_DONE:<lane>` on completion. Disables sync mode. Example: `MV:-10:300` = retract 10 mm at 5 mm/s (equivalent to `G1 E-10 F300`). |
 | `CU:` | Run cutter sequence on active lane. Returns `ER:CUTTER_DISABLED` if `CUTTER` toggle is off. |
 | `ST:` | Stop all motion immediately. Aborts toolchange and cutter. |
@@ -33,7 +33,7 @@ Both `UL:` and `UM:` stop automatically when the target sensor clears and emit `
 | Command | Description |
 |---------|-------------|
 | `T:<1\|2>` | Set active lane without motion. |
-| `TC:<1\|2>` | Full toolchange to lane N. Unloads current lane (cuts if `CUTTER=1`), swaps, then runs the new lane forward at `FEED_SPS` until toolhead sensor (`TS:1`). Returns `ER:NO_ACTIVE_LANE` if active lane is unknown. |
+| `TC:<1\|2>` | Full toolchange to lane N. Unloads current lane (cuts if `CUTTER=1`), swaps, then runs the new lane forward at `FEED` speed until toolhead sensor (`TS:1`). Returns `ER:NO_ACTIVE_LANE` if active lane is unknown. |
 
 ---
 
@@ -66,8 +66,8 @@ I2,O2          Lane 2 IN/OUT sensor
 TH:<n>         Toolhead filament (from TS:)
 YS:<n>         Y-splitter sensor
 BUF:<state>    Buffer state (MID/ADVANCE/TRAILING/FAULT)
-SPS:<n>        Current sync speed (steps/s)
-BL:<n>         Baseline sync speed
+SPS:<n>        Current sync speed (mm/min)
+BL:<n>         Baseline sync speed (mm/min)
 SM:<n>         Sync mode enabled
 BI:<n>         Buffer sensor inverted
 AP:<n>         AUTO_PRELOAD enabled
@@ -86,11 +86,13 @@ SET:<param>:<value>
 GET:<param>
 ```
 
+All speed parameters use **mm/min** (same as Klipper `F`). Defaults are hardware-dependent and scale with `MM_PER_STEP`; values below assume `MM_PER_STEP=0.001417`.
+
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `FEED_SPS` | Feed speed (steps/s) | 5000 |
-| `REV_SPS` | Reverse speed (steps/s) | 4000 |
-| `AUTO_SPS` | Autoload speed (steps/s) | 6000 |
+| `FEED` | Feed speed for `FL:`, `FD:`, TC load (mm/min) | ≈2126 |
+| `REV` | Reverse speed for `UL:`, `UM:` (mm/min) | ≈2126 |
+| `AUTO` | Autoload / `LO:` speed (mm/min) | ≈2126 |
 | `STARTUP_MS` | Stall arm delay after motion start (ms) | 10000 |
 | `AUTO_PRELOAD` | Auto-start preload on IN insert (`0`/`1`) | 1 |
 | `RETRACT_MM` | Back-off distance after OUT trigger on autoload (mm) | 10 |
@@ -103,19 +105,19 @@ GET:<param>
 | `CUT_LEN` | Cut stroke length (mm) | 10 |
 | `CUT_AMT` | Number of cut repetitions | 1 |
 | `TC_CUT_MS` | Toolchange cut timeout (ms) | 5000 |
-| `TC_UNLOAD_MS` | Toolchange unload timeout (ms) | 8000 |
+| `TC_UNLOAD_MS` | Toolchange unload timeout (ms) | 60000 |
 | `TC_Y_MS` | Wait for Y-splitter to clear after unload (ms, 0 = skip) | 5000 |
 | `TC_TH_MS` | Wait for `TS:` from host (ms, 0 = skip) | 3000 |
-| `TC_LOAD_MS` | Toolchange load timeout (ms) | 15000 |
-| `SYNC_MAX` | Max sync speed (steps/s) | 8000 |
-| `SYNC_MIN` | Min sync speed (steps/s) | 0 |
-| `SYNC_UP` | Sync ramp-up increment (steps/s per tick) | 300 |
-| `SYNC_DN` | Sync ramp-down increment (steps/s per tick) | 150 |
+| `TC_LOAD_MS` | Toolchange load timeout (ms) | 60000 |
+| `SYNC_MAX` | Max sync speed (mm/min) | ≈2551 |
+| `SYNC_MIN` | Min sync speed (mm/min) | 0 |
+| `SYNC_UP` | Sync ramp-up increment (steps/s per tick) — internal tuning | 300 |
+| `SYNC_DN` | Sync ramp-down increment (steps/s per tick) — internal tuning | 150 |
 | `SYNC_RATIO` | Buffer arm velocity → speed scale factor | 1.0 |
-| `PRE_RAMP` | Pre-advance speed offset (steps/s) | 400 |
+| `PRE_RAMP` | Pre-advance speed offset (mm/min) | ≈34 |
 | `BUF_TRAVEL` | Half-travel of buffer arm (mm) | 5.0 |
 | `BUF_HYST` | Buffer zone debounce (ms) | 30 |
-| `BASELINE` | Baseline sync speed override (steps/s) | adaptive |
+| `BASELINE` | Baseline sync speed override (mm/min) | adaptive |
 
 ### Per-lane
 
