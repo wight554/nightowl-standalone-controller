@@ -3,7 +3,6 @@
 
 This repo is firmware for real hardware. The goal of this workflow is simple:
 - `main` is always buildable/flashable
-- experiments never break the baseline
 - known-good restore points are easy to reach
 
 ---
@@ -11,31 +10,21 @@ This repo is firmware for real hardware. The goal of this workflow is simple:
 ## Branch policy
 
 ### `main`
+- The primary development branch.
 - Always **buildable**
 - Always **flashable**
-- Only merge into `main` when it is tested on hardware
 
-### `dev`
-- Integration branch
-- Features/fixes land here first
-- When `dev` is stable on hardware, merge to `main`
-
-### Short-lived branches
-Use one of these patterns:
+### Short-lived branches (Optional)
+For larger experiments, use one of these patterns before merging back to `main`:
 - `feature/<name>` – new functionality
 - `fix/<name>` – bugfixes
 - `hw/<name>` – hardware-specific changes (pins, display quirks, timing)
-
-Examples:
-- `feature/manual-menu`
-- `fix/swap-y-empty`
-- `hw/sh1106-i2c-timing`
 
 ---
 
 ## Daily workflow
 
-### 1) Start from `main`
+### 1) Sync and work on `main`
 ```bash
 git switch main
 git pull

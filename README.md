@@ -135,12 +135,9 @@ python3 scripts/nightowl_test.py "VR:" "?:"
 
 Branches:
 
-main      stable firmware  
-dev       integration branch  
-feature/* development branches  
-fix/*     bug fixes  
-
-Never develop directly on **main**.
+main      primary development branch
+feature/* optional experimental branches
+fix/*     optional bug fixes
 
 ---
 
