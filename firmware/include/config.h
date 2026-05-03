@@ -69,6 +69,14 @@
 #define CONF_SGT_L2             80
 #define CONF_TCOOLTHRS          400
 
+// ----- StallGuard buffer sync -----
+// SG_SYNC_THR: SG_RESULT below this = under tension → apply speed trim.
+// 0 disables SG-based sync trim (safe default; calibrate before enabling).
+// Typical starting point: read SG: during steady sync, set to ~80% of that.
+#define CONF_SG_SYNC_THR        0
+#define CONF_SG_SYNC_TRIM_SPS   200     // extra SPS added when under tension
+#define CONF_SG_ALPHA           0.20f   // EMA weight for SG filter (higher = faster response)
+
 // ----- Direction invert -----
 // Set to 1 if motor runs backward on LO: command
 #define CONF_M1_DIR_INVERT      0   // VERIFY: check physically

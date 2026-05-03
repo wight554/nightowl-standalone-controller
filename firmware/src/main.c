@@ -74,6 +74,11 @@ static int TMC_SGT_L1 = CONF_SGT_L1;
 static int TMC_SGT_L2 = CONF_SGT_L2;
 static int TMC_TCOOLTHRS = CONF_TCOOLTHRS;
 
+static int SG_SYNC_THR = CONF_SG_SYNC_THR;
+static int SG_SYNC_TRIM_SPS = CONF_SG_SYNC_TRIM_SPS;
+static float SG_ALPHA = CONF_SG_ALPHA;
+static float g_sg_load = 255.0f;   // EMA-filtered SG_RESULT (255 = neutral/unknown)
+
 static int SERVO_OPEN_US = CONF_SERVO_OPEN_US;
 static int SERVO_CLOSE_US = CONF_SERVO_CLOSE_US;
 static int SERVO_BLOCK_US = CONF_SERVO_BLOCK_US;
@@ -1150,6 +1155,20 @@ static void sync_tick(uint32_t now_ms) {
 
     sync_last_tick_ms = now_ms;
 
+    // Poll SG_RESULT every 5 ticks (~100 ms) for load-based trim.
+    // Only when SG_SYNC_THR is non-zero and the motor is actively running.
+    static int sg_poll_ctr = 0;
+    if (SG_SYNC_THR > 0 && ++sg_poll_ctr >= 5) {
+        sg_poll_ctr = 0;
+        lane_t *AL = lane_ptr(active_lane);
+        if (AL && AL->task == TASK_FEED) {
+            uint16_t sg_raw;
+            if (tmc_read_sg_result(AL->tmc, &sg_raw)) {
+                g_sg_load = SG_ALPHA * (float)sg_raw + (1.0f - SG_ALPHA) * g_sg_load;
+            }
+        }
+    }
+
     buf_state_t prev = g_buf.state;
     buf_state_t s = buf_read_stable(now_ms);
 
@@ -1174,6 +1193,11 @@ static void sync_tick(uint32_t now_ms) {
                 break;
             case BUF_MID: {
                 int target = g_baseline_sps + (predict_advance_coming() ? PRE_RAMP_SPS : 0);
+                // SG trim: if load is high (SG below threshold), extruder is pulling
+                // ahead before the buffer arm has moved — pre-emptively speed up.
+                if (SG_SYNC_THR > 0 && (int)g_sg_load < SG_SYNC_THR) {
+                    target += SG_SYNC_TRIM_SPS;
+                }
                 if (sync_current_sps > target) sync_current_sps -= SYNC_RAMP_DN_SPS;
                 else if (sync_current_sps < target) sync_current_sps += SYNC_RAMP_UP_SPS;
                 break;
@@ -1247,7 +1271,7 @@ static void stall_pump(void) {
 // ===================== Settings persistence =====================
 #define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define SETTINGS_MAGIC 0x4E314F57u // 'N1OW' - NightOwl settings sentinel.
-#define SETTINGS_VERSION 6u
+#define SETTINGS_VERSION 7u
 
 typedef struct {
     uint32_t magic;
@@ -1286,7 +1310,10 @@ typedef struct {
     bool require_y_empty_swap;
 
     int ramp_step_sps, ramp_tick_ms;
-    
+
+    int sg_sync_thr, sg_sync_trim_sps;
+    float sg_alpha;
+
     float mm_per_step;
 
     uint32_t crc32;
@@ -1360,7 +1387,11 @@ static void settings_defaults(void) {
 
     RAMP_STEP_SPS = CONF_RAMP_STEP_SPS;
     RAMP_TICK_MS = CONF_RAMP_TICK_MS;
-    
+
+    SG_SYNC_THR = CONF_SG_SYNC_THR;
+    SG_SYNC_TRIM_SPS = CONF_SG_SYNC_TRIM_SPS;
+    SG_ALPHA = CONF_SG_ALPHA;
+
     MM_PER_STEP = CONF_MM_PER_STEP;
 }
 
@@ -1422,7 +1453,11 @@ static void settings_save(void) {
 
     s.ramp_step_sps = RAMP_STEP_SPS;
     s.ramp_tick_ms = RAMP_TICK_MS;
-    
+
+    s.sg_sync_thr = SG_SYNC_THR;
+    s.sg_sync_trim_sps = SG_SYNC_TRIM_SPS;
+    s.sg_alpha = SG_ALPHA;
+
     s.mm_per_step = MM_PER_STEP;
 
     s.crc32 = crc32_buf((const uint8_t *)&s, offsetof(settings_t, crc32));
@@ -1531,6 +1566,10 @@ static void settings_load(void) {
     RAMP_STEP_SPS = s->ramp_step_sps;
     RAMP_TICK_MS = s->ramp_tick_ms;
 
+    SG_SYNC_THR = s->sg_sync_thr;
+    SG_SYNC_TRIM_SPS = s->sg_sync_trim_sps;
+    SG_ALPHA = s->sg_alpha;
+
     // Motor parameters always come from compile-time config (tune.h / config.ini).
     // Flash values for these fields are ignored so reflashing always takes effect.
     TMC_RUN_CURRENT_MA[0] = CONF_RUN_CURRENT_MA;
@@ -1568,12 +1607,12 @@ static void status_dump(void) {
     (void)tmc_read_sg_result(&g_tmc1, &sg1);
     (void)tmc_read_sg_result(&g_tmc2, &sg2);
 
-    char b[224];
+    char b[240];
     snprintf(b, sizeof(b),
         "LN:%d,TC:%s,L1T:%s,L2T:%s,"
         "I1:%d,O1:%d,I2:%d,O2:%d,"
         "TH:%d,YS:%d,BUF:%s,SPS:%d,BL:%d,SM:%d,BI:%d,AP:%d,CU:%d,"
-        "SG1:%u,SG2:%u",
+        "SG1:%u,SG2:%u,SGF:%d",
         active_lane, tc_state_name(g_tc_ctx.state),
         task_name(g_lane1.task), task_name(g_lane2.task),
         lane_in_present(&g_lane1) ? 1 : 0,
@@ -1590,7 +1629,8 @@ static void status_dump(void) {
         AUTO_PRELOAD ? 1 : 0,
         ENABLE_CUTTER ? 1 : 0,
         sg1,
-        sg2);
+        sg2,
+        (int)g_sg_load);
 
     cmd_reply("OK", b);
 }
@@ -1813,6 +1853,9 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             else if (!strcmp(param, "RETRACT_MM"))       AUTOLOAD_RETRACT_MM = clamp_i(iv, 0, 50);
             else if (!strcmp(param, "CUTTER"))            ENABLE_CUTTER = (iv != 0);
             else if (!strcmp(param, "BASELINE"))         g_baseline_sps = clamp_i(iv, 200, 30000);
+            else if (!strcmp(param, "SG_SYNC_THR"))  SG_SYNC_THR = clamp_i(iv, 0, 511);
+            else if (!strcmp(param, "SG_SYNC_TRIM")) SG_SYNC_TRIM_SPS = clamp_i(iv, 0, 5000);
+            else if (!strcmp(param, "SG_ALPHA"))     { SG_ALPHA = fv < 0.01f ? 0.01f : fv > 1.0f ? 1.0f : fv; }
             else if (!strcmp(param, "STARTUP_MS"))   MOTION_STARTUP_MS = clamp_i(iv, 0, 30000);
             else if (!strcmp(param, "SERVO_OPEN"))   SERVO_OPEN_US = clamp_i(iv, 400, 2600);
             else if (!strcmp(param, "SERVO_CLOSE"))  SERVO_CLOSE_US = clamp_i(iv, 400, 2600);
@@ -1854,6 +1897,9 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         else if (!strcmp(param, "RETRACT_MM"))    snprintf(out, sizeof(out), "RETRACT_MM:%d", AUTOLOAD_RETRACT_MM);
         else if (!strcmp(param, "CUTTER"))         snprintf(out, sizeof(out), "CUTTER:%d", ENABLE_CUTTER ? 1 : 0);
         else if (!strcmp(param, "BASELINE"))     snprintf(out, sizeof(out), "BASELINE:%d", g_baseline_sps);
+        else if (!strcmp(param, "SG_SYNC_THR"))  snprintf(out, sizeof(out), "SG_SYNC_THR:%d", SG_SYNC_THR);
+        else if (!strcmp(param, "SG_SYNC_TRIM")) snprintf(out, sizeof(out), "SG_SYNC_TRIM:%d", SG_SYNC_TRIM_SPS);
+        else if (!strcmp(param, "SG_ALPHA"))     snprintf(out, sizeof(out), "SG_ALPHA:%.3f", (double)SG_ALPHA);
         else if (!strcmp(param, "STARTUP_MS"))   snprintf(out, sizeof(out), "STARTUP_MS:%d", MOTION_STARTUP_MS);
         else if (!strcmp(param, "SERVO_OPEN"))   snprintf(out, sizeof(out), "SERVO_OPEN:%d", SERVO_OPEN_US);
         else if (!strcmp(param, "SERVO_CLOSE"))  snprintf(out, sizeof(out), "SERVO_CLOSE:%d", SERVO_CLOSE_US);
