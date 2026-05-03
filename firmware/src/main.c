@@ -79,6 +79,7 @@ static int TMC_TCOOLTHRS = CONF_TCOOLTHRS;
 static int SG_SYNC_THR = CONF_SG_SYNC_THR;
 static int SG_SYNC_TRIM_SPS = CONF_SG_SYNC_TRIM_SPS;
 static float SG_ALPHA = CONF_SG_ALPHA;
+static int SG_TENSION_MAX = 0;
 static float g_sg_load = 255.0f;   // EMA-filtered SG_RESULT (255 = neutral/unknown)
 static int STALL_RECOVERY_MS = CONF_STALL_RECOVERY_MS;
 
@@ -1304,8 +1305,10 @@ static void sync_tick(uint32_t now_ms) {
     // to SG_SYNC_TRIM_SPS (SG=0 = maximum tension / near stall).
     // SG reacts before the buffer arm moves, providing a fast inner-loop lead.
     if (s != BUF_TRAILING && SG_SYNC_THR > 0 && (int)g_sg_load < SG_SYNC_THR) {
+        float tension_range = (float)(SG_SYNC_THR - SG_TENSION_MAX);
+        if (tension_range < 1.0f) tension_range = 1.0f;
         float sg_frac = clamp_f(
-            (float)(SG_SYNC_THR - (int)g_sg_load) / (float)SG_SYNC_THR,
+            (float)(SG_SYNC_THR - (int)g_sg_load) / tension_range,
             0.0f, 1.0f);
         correction += sg_frac * (float)SG_SYNC_TRIM_SPS;
     }
@@ -1395,7 +1398,7 @@ static void stall_pump(void) {
 // ===================== Settings persistence =====================
 #define SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define SETTINGS_MAGIC 0x4E314F57u // 'N1OW' - NightOwl settings sentinel.
-#define SETTINGS_VERSION 8u
+#define SETTINGS_VERSION 9u
 
 typedef struct {
     uint32_t magic;
@@ -1437,6 +1440,7 @@ typedef struct {
 
     int sg_sync_thr, sg_sync_trim_sps;
     float sg_alpha;
+    int sg_tension_max;
 
     int buf_sensor_type;
     float buf_neutral, buf_range, buf_thr, buf_analog_alpha;
@@ -1520,6 +1524,7 @@ static void settings_defaults(void) {
     SG_SYNC_THR = CONF_SG_SYNC_THR;
     SG_SYNC_TRIM_SPS = CONF_SG_SYNC_TRIM_SPS;
     SG_ALPHA = CONF_SG_ALPHA;
+    SG_TENSION_MAX = 0;
 
     BUF_SENSOR_TYPE = CONF_BUF_SENSOR_TYPE;
     BUF_NEUTRAL = CONF_BUF_NEUTRAL;
@@ -1594,6 +1599,7 @@ static void settings_save(void) {
     s.sg_sync_thr = SG_SYNC_THR;
     s.sg_sync_trim_sps = SG_SYNC_TRIM_SPS;
     s.sg_alpha = SG_ALPHA;
+    s.sg_tension_max = SG_TENSION_MAX;
 
     s.buf_sensor_type = BUF_SENSOR_TYPE;
     s.buf_neutral = BUF_NEUTRAL;
@@ -1714,6 +1720,7 @@ static void settings_load(void) {
     SG_SYNC_THR = s->sg_sync_thr;
     SG_SYNC_TRIM_SPS = s->sg_sync_trim_sps;
     SG_ALPHA = s->sg_alpha;
+    SG_TENSION_MAX = s->sg_tension_max;
 
     BUF_SENSOR_TYPE = s->buf_sensor_type;
     BUF_NEUTRAL = s->buf_neutral;
@@ -2028,6 +2035,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             else if (!strcmp(param, "SG_SYNC_THR"))  SG_SYNC_THR = clamp_i(iv, 0, 511);
             else if (!strcmp(param, "SG_SYNC_TRIM")) SG_SYNC_TRIM_SPS = clamp_i(mm_per_min_to_sps(fv), 0, 50000);
             else if (!strcmp(param, "SG_ALPHA"))     { SG_ALPHA = fv < 0.01f ? 0.01f : fv > 1.0f ? 1.0f : fv; }
+            else if (!strcmp(param, "SG_TENSION_MAX")) SG_TENSION_MAX = clamp_i(iv, 0, 511);
             else if (!strcmp(param, "BUF_SENSOR"))   BUF_SENSOR_TYPE = clamp_i(iv, 0, 1);
             else if (!strcmp(param, "BUF_NEUTRAL"))  BUF_NEUTRAL = clamp_f(fv, 0.0f, 1.0f);
             else if (!strcmp(param, "BUF_RANGE"))    BUF_RANGE = clamp_f(fv, 0.01f, 0.5f);
@@ -2079,6 +2087,7 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
         else if (!strcmp(param, "SG_SYNC_THR"))  snprintf(out, sizeof(out), "SG_SYNC_THR:%d", SG_SYNC_THR);
         else if (!strcmp(param, "SG_SYNC_TRIM")) snprintf(out, sizeof(out), "SG_SYNC_TRIM:%.1f", (double)sps_to_mm_per_min(SG_SYNC_TRIM_SPS));
         else if (!strcmp(param, "SG_ALPHA"))     snprintf(out, sizeof(out), "SG_ALPHA:%.3f", (double)SG_ALPHA);
+        else if (!strcmp(param, "SG_TENSION_MAX")) snprintf(out, sizeof(out), "SG_TENSION_MAX:%d", SG_TENSION_MAX);
         else if (!strcmp(param, "BUF_SENSOR"))   snprintf(out, sizeof(out), "BUF_SENSOR:%d", BUF_SENSOR_TYPE);
         else if (!strcmp(param, "BUF_NEUTRAL"))  snprintf(out, sizeof(out), "BUF_NEUTRAL:%.3f", (double)BUF_NEUTRAL);
         else if (!strcmp(param, "BUF_RANGE"))    snprintf(out, sizeof(out), "BUF_RANGE:%.3f", (double)BUF_RANGE);
