@@ -1744,11 +1744,12 @@ static void cmd_execute(const char *cmd, const char *p, uint32_t now_ms) {
             return;
         }
         float mm = 0.0f;
-        int sps = 0;
-        if (sscanf(p, "%f:%d", &mm, &sps) != 2 || sps <= 0) {
+        float feed_mm_min = 0.0f;
+        if (sscanf(p, "%f:%f", &mm, &feed_mm_min) != 2 || feed_mm_min <= 0.0f) {
             cmd_reply("ER", "ARG");
             return;
         }
+        int sps = (int)(feed_mm_min / 60.0f / MM_PER_STEP + 0.5f);
         sps = clamp_i(sps, 200, 50000);
         bool forward = (mm >= 0.0f);
         float dist_mm = mm < 0.0f ? -mm : mm;
