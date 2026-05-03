@@ -264,32 +264,35 @@ target_sps = baseline
            + PRE_RAMP                      (predictive: kick before ADVANCE arrives)
 ```
 
-`SG_SYNC_TRIM` is the maximum speed addition when `SG_RESULT = 0` (full
-tension / near-stall). Correction scales linearly: half trim at half tension,
-zero trim when `SG_RESULT ≥ SG_SYNC_THR`.
+`SG_SYNC_TRIM` is the maximum speed addition at full tension.  Correction scales
+linearly from zero (when `SG_RESULT ≥ SG_SYNC_THR`) to `SG_SYNC_TRIM` (when
+`SG_RESULT ≤ SG_TENSION_MAX`).
 
-### Tuning `SG_SYNC_THR` (sync load trim)
+### Tuning `SG_SYNC_THR` and `SG_TENSION_MAX` (sync load trim)
 
-1. Enable sync and print at normal speed.
-2. Poll SG while buffer is at neutral (neither ADVANCE nor TRAILING):
+Use `scripts/tune_stallguard.py --neutral` and `--advance` to profile SG values
+automatically, then apply the recommendations.
+
+1. Run `tune_stallguard.py --neutral` with filament loaded but not touching the
+   extruder.  It profiles free-spin SG at print-speed range and recommends
+   `SG_SYNC_THR` (~75% of free-spin SG at target speed):
    ```
-   SG:1
-   SG:1
-   SG:1
+   SET:SG_SYNC_THR:50     # example: free-spin SG ≈ 63 at 2100 mm/min
    ```
-   Note the stable value during normal, unloaded sync — call it `SG_STEADY`.
-3. Set `SG_SYNC_THR` just below `SG_STEADY` so the trim activates only when
-   tension rises above the baseline:
+2. Run `tune_stallguard.py --advance` while commanding the extruder to pull
+   faster than the MMU feeds.  Apply the recommended `SG_TENSION_MAX`:
    ```
-   SET:SG_SYNC_THR:80     # if SG_STEADY ≈ 120, set to ~80 (⅔ of steady)
+   SET:SG_TENSION_MAX:20  # SG at maximum observed tension
    ```
-4. Set `SG_SYNC_TRIM` to the extra speed you want at maximum tension.  Start
+   `SG_TENSION_MAX = 0` applies full trim only when `SG_RESULT = 0` (safe
+   default before profiling).
+3. Set `SG_SYNC_TRIM` to the extra speed you want at maximum tension.  Start
    conservatively (e.g., 500–1000 mm/min) and increase if the buffer still
    spikes to ADVANCE before the correction catches up:
    ```
    SET:SG_SYNC_TRIM:600
    ```
-5. `SG_SYNC_THR:0` disables the trim entirely (safe default).
+4. `SG_SYNC_THR:0` disables the trim entirely (safe default).
 
 ### Stall recovery during sync
 

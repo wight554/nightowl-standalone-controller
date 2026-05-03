@@ -126,6 +126,10 @@ All speed parameters use **mm/min** (same as Klipper `F`). Defaults are hardware
 | `BUF_THR` | Analog sensor: normalised threshold to declare ADVANCE/TRAILING | 0.30 |
 | `BUF_ALPHA` | Analog sensor: EMA filter weight (higher = faster response) | 0.20 |
 | `TS_BUF_MS` | Buffer-based TS:1 fallback: ms buffer must hold TRAILING after OUT seen — tip pressed against extruder gears (0 = disabled) | 2000 |
+| `SG_SYNC_THR` | SG_RESULT below this activates sync load trim; 0 = disabled (calibrate before enabling) | 0 |
+| `SG_SYNC_TRIM` | Extra speed added at maximum tension (mm/min) | ≈17 |
+| `SG_TENSION_MAX` | SG_RESULT at maximum expected tension — 100% of SG_SYNC_TRIM applied at or below this value; 0 = full trim only at SG=0 | 0 |
+| `SG_ALPHA` | EMA weight for SG filter (higher = faster response) | 0.20 |
 
 ### Per-lane
 

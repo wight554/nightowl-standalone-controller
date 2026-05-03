@@ -21,7 +21,7 @@ def read_sg(ser, lane):
     # Flush input buffer to clear old events
     ser.reset_input_buffer()
     ser.write(f"SG:{lane}\n".encode('utf-8'))
-    
+
     timeout = time.time() + 1.0
     while time.time() < timeout:
         if ser.in_waiting:
@@ -33,35 +33,40 @@ def read_sg(ser, lane):
                     pass
     return -1
 
-def run_neutral_profiling(ser, lane):
-    print("\n--- PHASE 1: Neutral Profiling (Mid-Air) ---")
-    print("Ensure filament is loaded past the MMU, but NOT in the extruder.")
+# SpreadCycle starts at ~1063 mm/min with default TCOOLTHRS=1000
+# (TSTEP = 12.5 MHz / SPS; active when TSTEP <= TCOOLTHRS)
+SPREADCYCLE_MIN_MM_MIN = 1200
+
+def run_neutral_profiling(ser, lane, target_speed=2100):
+    print("\n--- PHASE 1: Neutral Profiling (Free Spin) ---")
+    print("Ensure filament is loaded past the MMU but NOT touching the extruder gears.")
+    print(f"StallGuard is only meaningful at >={SPREADCYCLE_MIN_MM_MIN} mm/min (SpreadCycle range).")
     input("Press Enter to begin...")
 
     send_cmd(ser, f"T:{lane}")
-    send_cmd(ser, "SM:0") # Disable sync
+    send_cmd(ser, "SM:0")
 
-    # Test speeds from 300 mm/min (5mm/s) to 2400 mm/min (40mm/s) in 5mm/s steps
-    speeds = range(300, 2401, 300)
+    # Test from SPREADCYCLE_MIN_MM_MIN to 3000 mm/min — all SpreadCycle territory
+    speeds = range(SPREADCYCLE_MIN_MM_MIN, 3001, 300)
     results = {}
 
     for speed in speeds:
         print(f"Testing speed {speed} mm/min...", end="", flush=True)
         send_cmd(ser, f"SET:FEED:{speed}")
-        send_cmd(ser, "FD:") # Start continuous feed
-        
-        time.sleep(1.0) # Let speed stabilize and ramp up
-        
+        send_cmd(ser, "FD:")
+
+        time.sleep(1.0)  # let ramp finish (~700 ms at 3000 mm/min)
+
         sgs = []
         for _ in range(10):
             val = read_sg(ser, lane)
             if val != -1:
                 sgs.append(val)
             time.sleep(0.1)
-            
-        send_cmd(ser, "ST:") # Stop
+
+        send_cmd(ser, "ST:")
         time.sleep(0.5)
-        
+
         if sgs:
             avg_sg = sum(sgs) / len(sgs)
             results[speed] = avg_sg
@@ -70,52 +75,24 @@ def run_neutral_profiling(ser, lane):
             print(" Failed to read SG")
 
     print("\nNeutral Profile Results:")
-    min_steady = 511
     for spd, sg in results.items():
         print(f"  {spd} mm/min: {sg:.1f}")
-        if sg < min_steady:
-            min_steady = sg
-            
-    recommended_thr = int(min_steady * 0.90)
-    print(f"\nRecommended SG_SYNC_THR (90% of lowest steady): {recommended_thr}")
-    print(f"To apply: SET:SG_SYNC_THR:{recommended_thr}")
 
+    # Base recommendation on SG at the target print/sync speed
+    if results:
+        nearest = min(results.keys(), key=lambda s: abs(s - target_speed))
+        sg_at_target = results[nearest]
+        recommended_thr = int(sg_at_target * 0.75)
+        print(f"\nTarget speed {target_speed} mm/min → nearest tested {nearest} mm/min: SG = {sg_at_target:.1f}")
+        print(f"Recommended SG_SYNC_THR (75% of free-spin SG at target speed): {recommended_thr}")
+        print(f"  SET:SG_SYNC_THR:{recommended_thr}")
+        print("Note: SG_SYNC_THR trim is inactive by default (SG_SYNC_THR:0).")
+        print("      Set SG_SYNC_TRIM to the extra speed you want added at full tension,")
+        print("      then run --advance to calibrate SG_TENSION_MAX.")
 
-def run_trailing_profiling(ser, lane):
-    print("\n--- PHASE 2: Trailing Profiling (Compression/Jam) ---")
-    print("Ensure filament is resting against STOPPED extruder gears.")
-    input("Press Enter to begin...")
-
-    send_cmd(ser, f"T:{lane}")
-    send_cmd(ser, "SM:0")
-    
-    # Use a safe low speed for compression testing (300 mm/min = 5 mm/s)
-    test_speed = 300
-    send_cmd(ser, f"SET:FEED:{test_speed}")
-    
-    print("Pushing filament... (monitoring SG for 5 seconds)")
-    # We use MV to limit the maximum travel just in case
-    send_cmd(ser, f"MV:20:{test_speed}")
-    
-    lowest_sg = 511
-    timeout = time.time() + 5.0
-    
-    while time.time() < timeout:
-        val = read_sg(ser, lane)
-        if val != -1:
-            print(f"Current SG: {val}")
-            if val < lowest_sg:
-                lowest_sg = val
-        time.sleep(0.1)
-        
-    send_cmd(ser, "ST:") # Force stop
-    
-    print(f"\nLowest SG recorded during compression: {lowest_sg}")
-    recommended_comp_min = int(lowest_sg * 1.1)
-    print(f"Recommended SG_COMPRESSION_MIN: {recommended_comp_min}")
 
 def run_advance_profiling(ser, lane):
-    print("\n--- PHASE 3: Advance Profiling (Tension / Extruder Pulling) ---")
+    print("\n--- PHASE 2: Advance Profiling (Tension / Extruder Pulling) ---")
     print("This phase requires manual coordination with your 3D printer (via Klipper/Mainsail).")
     print("1. Heat your hotend to printing temperature.")
     print("2. Ensure filament is loaded all the way into the extruder.")
@@ -123,23 +100,20 @@ def run_advance_profiling(ser, lane):
 
     send_cmd(ser, f"T:{lane}")
     send_cmd(ser, "SM:0")
-    
-    baseline_speed = 900 # 15 mm/s (MMU side)
+
+    baseline_speed = 900  # 15 mm/s (MMU side)
     send_cmd(ser, f"SET:FEED:{baseline_speed}")
     send_cmd(ser, "FD:")
-    
-    print(f"\nMMU is now feeding continuously at {baseline_speed} mm/min (15 mm/s).")
-    print("In your Klipper console, command the extruder to pull at a matched speed (15 mm/s), then faster up to your max (e.g., 25, 40 mm/s).")
-    print("Example G-code for Klipper (assuming E-steps are 100 steps/mm):")
-    print("  G1 E100 F900  ; Extrude 100mm at 15mm/s (900mm/min)")
-    print("  G1 E100 F1200 ; Extrude 100mm at 20mm/s (1200mm/min)")
-    print("  G1 E100 F1500 ; Extrude 100mm at 25mm/s (1500mm/min) - increased tension")
-    print("  G1 E100 F1800 ; Extrude 100mm at 30mm/s (1800mm/min)")
-    print("  G1 E100 F2100 ; Extrude 100mm at 35mm/s (2100mm/min)")
-    print("  G1 E100 F2400 ; Extrude 100mm at 40mm/s (2400mm/min) - maximum tension")
-    print("\nMonitoring SG_RESULT for tension (lowest value = highest tension)...")
-    print("Press Ctrl+C to stop testing and see the results.")
-    
+
+    print(f"\nMMU is now feeding continuously at {baseline_speed} mm/min.")
+    print("In your Klipper console, command the extruder to pull faster than the MMU feeds")
+    print("to simulate maximum tension. Increase extruder speed gradually:")
+    print("  G1 E100 F900   ; matched speed — no tension")
+    print("  G1 E100 F1500  ; faster pull — light tension")
+    print("  G1 E100 F2400  ; maximum tension")
+    print("\nMonitoring SG_RESULT (lower = more tension)...")
+    print("Press Ctrl+C to stop and see results.")
+
     lowest_sg = 511
     try:
         while True:
@@ -151,49 +125,47 @@ def run_advance_profiling(ser, lane):
             time.sleep(0.1)
     except KeyboardInterrupt:
         pass
-        
-    send_cmd(ser, "ST:") # Force stop
-    print(f"\n\nLowest SG recorded during tension: {lowest_sg}")
-    recommended_max = int(lowest_sg * 0.9) # A little margin
-    print(f"Recommended SG_TENSION_MAX (100% trim application point): {recommended_max}")
-    print(f"To apply: SET:SG_TENSION_MAX:{recommended_max}")
+
+    send_cmd(ser, "ST:")
+    print(f"\n\nLowest SG recorded under maximum tension: {lowest_sg}")
+    print(f"Recommended SG_TENSION_MAX (100% trim applied at or below this SG): {lowest_sg}")
+    print(f"  SET:SG_TENSION_MAX:{lowest_sg}")
+    print("SG_TENSION_MAX is the lower bound of the proportional correction window.")
+    print("Full SG_SYNC_TRIM is applied when SG_RESULT drops to SG_TENSION_MAX or below.")
 
 def main():
     parser = argparse.ArgumentParser(description="StallGuard Tuning Script for NightOwl")
     parser.add_argument("--port", help="Serial port to connect to")
     parser.add_argument("--lane", type=int, choices=[1, 2], default=1, help="Lane to tune (1 or 2)")
-    parser.add_argument("--neutral", action="store_true", help="Run Phase 1: Neutral Profiling")
-    parser.add_argument("--trailing", action="store_true", help="Run Phase 2: Trailing Profiling")
-    
-    parser.add_argument("--advance", action="store_true", help="Run Phase 3: Advance Profiling")
+    parser.add_argument("--neutral", action="store_true", help="Run Phase 1: Neutral Profiling (free-spin SG → SG_SYNC_THR)")
+    parser.add_argument("--advance", action="store_true", help="Run Phase 2: Advance Profiling (max tension SG → SG_TENSION_MAX)")
+    parser.add_argument("--feed-speed", type=int, default=2100,
+                        help="Target print/sync speed mm/min for neutral recommendation (default: 2100)")
     args = parser.parse_args()
-    
-    if not (args.neutral or args.trailing or args.advance):
-        print("Please specify a tuning phase to run (--neutral, --trailing, and/or --advance)")
+
+    if not (args.neutral or args.advance):
+        print("Please specify a tuning phase: --neutral and/or --advance")
         sys.exit(1)
-        
+
     port = args.port if args.port else find_serial_port()
     print(f"Connecting to {port}...")
-    
+
     try:
         ser = serial.Serial(port, 115200, timeout=1)
-        time.sleep(2) # Wait for potential reboot/init
+        time.sleep(2)  # wait for potential reboot/init
     except Exception as e:
         print(f"Failed to connect: {e}")
         sys.exit(1)
-        
+
     try:
         if args.neutral:
-            run_neutral_profiling(ser, args.lane)
-            
-        if args.trailing:
-            run_trailing_profiling(ser, args.lane)
-            
+            run_neutral_profiling(ser, args.lane, args.feed_speed)
+
         if args.advance:
             run_advance_profiling(ser, args.lane)
-            
+
     finally:
-        send_cmd(ser, "ST:") # Ensure motors are stopped
+        send_cmd(ser, "ST:")
         ser.close()
 
 if __name__ == "__main__":
